@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Connected — Antonagents</title>
+<script>
+  (function(){ try{ var t=localStorage.getItem('sa-theme'); if(t) document.documentElement.setAttribute('data-theme',t); }catch(e){} })();
+</script>
+<style>
+  :root{ --bg:oklch(.165 .014 258); --fg:oklch(.955 .006 258); --muted:oklch(.66 .014 258);
+    --ok:oklch(.8 .15 158); --line:oklch(.285 .017 258); }
+  @media (prefers-color-scheme:light){ :root{ --bg:oklch(.975 .005 258); --fg:oklch(.24 .02 258);
+    --muted:oklch(.5 .016 258); --ok:oklch(.55 .15 158); --line:oklch(.9 .01 258); } }
+  :root[data-theme="light"]{ --bg:oklch(.975 .005 258); --fg:oklch(.24 .02 258); --muted:oklch(.5 .016 258); --ok:oklch(.55 .15 158); --line:oklch(.9 .01 258); }
+  :root[data-theme="dark"]{ --bg:oklch(.165 .014 258); --fg:oklch(.955 .006 258); --muted:oklch(.66 .014 258); --ok:oklch(.8 .15 158); --line:oklch(.285 .017 258); }
+  html,body{ height:100%; }
+  body{ margin:0; background:var(--bg); color:var(--fg); display:flex; align-items:center; justify-content:center;
+    font:15px/1.6 'Geist',system-ui,-apple-system,Segoe UI,sans-serif; }
+  .card{ text-align:center; padding:40px 32px; }
+  .tick{ width:52px; height:52px; border-radius:50%; margin:0 auto 18px; display:flex; align-items:center; justify-content:center;
+    color:var(--ok); border:2px solid var(--ok); font-size:26px; }
+  h1{ font:600 19px/1.3 'Geist Mono',ui-monospace,Menlo,monospace; letter-spacing:-.01em; margin:0 0 8px; }
+  p{ color:var(--muted); margin:0; font-family:'Geist Mono',ui-monospace,Menlo,monospace; font-size:12.5px; letter-spacing:.02em; }
+  .err{ color:var(--fg); }
+</style>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg"/>
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"/>
+<link rel="apple-touch-icon" href="/apple-touch-icon.png"/>
+</head>
+<body>
+  <div class="card">
+    <div class="tick" id="mark">✓</div>
+    <h1 id="title">Account connected</h1>
+    <p id="msg">You can close this window.</p>
+  </div>
+<script>
+  var params = new URLSearchParams(location.search);
+  var status = params.get('status');
+  if (status && status !== 'success'){
+    document.getElementById('mark').textContent = '!';
+    document.getElementById('mark').style.color = 'var(--muted)';
+    document.getElementById('mark').style.borderColor = 'var(--muted)';
+    document.getElementById('title').textContent = 'Connection not completed';
+    document.getElementById('msg').textContent = 'You can close this window and try again.';
+  }
+  // tell the console (opener) to refresh its Connections panel, then close.
+  try { if (window.opener && !window.opener.closed) window.opener.postMessage('sa-connector-updated', location.origin); } catch(e){}
+  setTimeout(function(){ try { window.close(); } catch(e){} }, 900);
+  // if the browser refused to close the tab, offer a way back
+  setTimeout(function(){
+    if (!document.hidden){
+      document.getElementById('msg').innerHTML = 'You can close this window, or <a href="/app" style="color:var(--ok)">return to the console</a>.';
+    }
+  }, 1500);
+</script>
+</body>
+</html>

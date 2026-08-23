@@ -1,0 +1,62 @@
+# Self-host Antonagents with Docker Compose.
+#
+# One-time prerequisites:
+#   1. Build the per-run task image (the agent sandbox this app launches on the
+#      host daemon — a separate image, not built by this compose file):
+#        docker build -t superagent-task:latest -f docker/Dockerfile.task agent/
+#   2. cp .env.example .env  and set SUPERAGENT_SESSION_SECRET to a stable, random
+#      value (it keys at-rest encryption — if it changes, encrypted data is lost).
+#
+# Then:
+#   docker compose up --build
+#   open http://localhost:8080/app
+#
+# SECURITY: the app container mounts the host Docker socket, giving it
+# host-root-equivalent privileges. This is inherent to the per-run execution
+# model and acceptable for single-tenant self-hosting. See docs/SECURITY.md.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.app
+    image: superagent-app:latest
+    env_file: .env
+    ports:
+      - "${SUPERAGENT_PORT:-8080}:8080"
+    volumes:
+      # SQLite DB + app state persist on the host
+      - ./data:/app/data
+      # launch per-run task containers as siblings on the host Docker daemon.
+      # (Artifacts are read back through the daemon too — a short-lived helper
+      # container mounts the agent's volume — so no host volume path is needed,
+      # and this works on Linux, macOS, and Windows alike.)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # optional: override the baked-in provider/routing config
+      # - ./providers.json:/app/providers.json:ro
+      # - ./routing.json:/app/routing.json:ro
+    restart: unless-stopped
+
+  # Optional LiteLLM gateway — enables OpenAI / Gemini / etc. by translating the
+  # Anthropic protocol the agent speaks into each vendor's API. OFF by default;
+  # enable with:  docker compose --profile litellm up
+  #
+  # Setup: cp litellm.config.example.yaml litellm.config.yaml, then in .env set
+  # OPENAI_API_KEY (your real key, used only here) and OPENAI_GATEWAY_KEY (a secret
+  # you choose, shared with Antonagents). Then pick provider "OpenAI (via LiteLLM
+  # gateway)" in the app.
+  #
+  # Bound to the Docker bridge gateway (172.17.0.1) so per-run task containers reach
+  # it at http://172.17.0.1:4000 — matching the `openai` provider in providers.json
+  # — while staying off the public internet. (If your daemon's bridge isn't the
+  # default 172.17.0.1, adjust this and the provider base_url to match.)
+  litellm:
+    profiles: ["litellm"]
+    image: ghcr.io/berriai/litellm:main-stable
+    env_file: .env
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    volumes:
+      - ./litellm.config.yaml:/app/config.yaml:ro
+    ports:
+      - "172.17.0.1:4000:4000"
+    restart: unless-stopped

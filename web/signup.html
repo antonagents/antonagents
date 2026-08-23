@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Create your workspace · Antonagents</title>
+<style>
+  :root{
+    --bg:#f4f5f7; --surface:#ffffff; --fg:#1b1d21; --muted:#6b7280; --line:#e4e7eb;
+    --accent:#2f6df6; --accent-ink:#ffffff; --ok:#1a7f52; --err:#c0362c;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0f1115; --surface:#171a20; --fg:#e8eaed; --muted:#9aa1ac; --line:#272b33;
+           --accent:#5b8cff; --accent-ink:#0f1115; }
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background:var(--bg); color:var(--fg); font-family:var(--sans); padding:24px; }
+  .card{ width:100%; max-width:440px; background:var(--surface); border:1px solid var(--line);
+    border-radius:16px; padding:36px 32px; box-shadow:0 12px 40px rgba(0,0,0,.10); text-align:center; }
+  .brand{ display:flex; align-items:center; justify-content:center; gap:9px; margin-bottom:26px; }
+  .mark{ width:22px; height:22px; display:inline-block;
+    background:var(--accent);
+    -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect x='3.5' y='3.5' width='41' height='41' rx='10' fill='none' stroke='%23000' stroke-width='3'/%3E%3Cpath d='M19 15 L28 24 L19 33' fill='none' stroke='%23000' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
+            mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect x='3.5' y='3.5' width='41' height='41' rx='10' fill='none' stroke='%23000' stroke-width='3'/%3E%3Cpath d='M19 15 L28 24 L19 33' fill='none' stroke='%23000' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat; }
+  .brand h1{ font-size:19px; font-weight:600; margin:0; letter-spacing:-.01em; }
+  .brand h1 b{ color:var(--accent); font-weight:600; }
+  .eyebrow{ font-family:var(--mono); font-size:12px; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--muted); margin-bottom:10px; }
+  .title{ font-size:22px; font-weight:600; line-height:1.3; margin:0 0 6px; text-wrap:balance; }
+  .sub{ color:var(--muted); font-size:14px; margin:0 0 22px; }
+  form{ display:flex; flex-direction:column; gap:12px; text-align:left; }
+  label{ font-size:12.5px; color:var(--muted); margin-bottom:-6px; }
+  input{ width:100%; padding:11px 13px; border:1px solid var(--line); border-radius:10px;
+    background:var(--bg); color:var(--fg); font-size:15px; font-family:var(--sans); }
+  input:focus{ outline:none; border-color:var(--accent); }
+  input:disabled{ opacity:.7; }
+  button{ width:100%; padding:12px 16px; border:none; border-radius:10px; background:var(--accent);
+    color:var(--accent-ink); font-size:15px; font-weight:600; cursor:pointer; font-family:var(--sans); margin-top:4px; }
+  button:hover{ filter:brightness(1.05); } button:disabled{ opacity:.6; cursor:default; }
+  .msg{ font-size:13.5px; margin-top:14px; text-align:center; }
+  .msg.err{ color:var(--err); } .msg.ok{ color:var(--ok); }
+  a.secondary{ display:inline-block; margin-top:16px; color:var(--muted); font-size:13.5px; text-decoration:none; }
+  a.secondary:hover{ color:var(--fg); }
+  .spin{ color:var(--muted); font-size:14px; }
+</style>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg"/>
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"/>
+<link rel="apple-touch-icon" href="/apple-touch-icon.png"/>
+</head>
+<body>
+  <div class="card" id="card">
+    <div class="brand"><span class="mark"></span><h1>anton<b>agents</b></h1></div>
+    <div id="body"><div class="spin">Loading your invitation…</div></div>
+  </div>
+<script>
+  const TOKEN = decodeURIComponent(location.pathname.split('/').filter(Boolean).pop() || '');
+  const $body = document.getElementById('body');
+  const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  async function api(path, opts){
+    const r = await fetch(path, opts);
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok) throw Object.assign(new Error(j.detail||('HTTP '+r.status)), {status:r.status, detail:j.detail});
+    return j;
+  }
+
+  function invalid(text){ $body.innerHTML =
+    `<p class="title">Invitation unavailable</p><p class="sub">${esc(text)}</p>
+     <a class="secondary" href="/app">Go to Antonagents</a>`; }
+
+  async function load(){
+    if (!TOKEN) return invalid('No invitation token in the link.');
+    let inv;
+    try { inv = await api('/api/invitations/'+encodeURIComponent(TOKEN)); }
+    catch(e){ return invalid('This invitation could not be found.'); }
+    if (!inv.new_workspace) return invalid('This link is a team invite, not a signup link. Open it at /invite instead.');
+    if (inv.status !== 'pending') return invalid('This invitation has already been used or revoked.');
+    if (inv.expired) return invalid('This invitation has expired.');
+    $body.innerHTML = `
+      <div class="eyebrow">You're invited</div>
+      <p class="title">Create your workspace</p>
+      <p class="sub">A fresh Antonagents workspace, all yours. You'll be its admin.</p>
+      <form id="f">
+        <label>Email</label>
+        <input id="email" type="email" value="${esc(inv.email)}" disabled />
+        <label>Your name</label>
+        <input id="name" type="text" placeholder="Jane Doe" autocomplete="name" />
+        <label>Password</label>
+        <input id="pw" type="password" placeholder="Choose a password" autocomplete="new-password" minlength="8" required />
+        <button id="go" type="submit">Create workspace</button>
+      </form>
+      <div class="msg" id="msg"></div>
+      <a class="secondary" href="/app">Already have an account? Sign in</a>`;
+    document.getElementById('email').dataset.value = inv.email;
+    document.getElementById('f').onsubmit = (e)=>{ e.preventDefault(); submit(inv.email); };
+  }
+
+  async function submit(email){
+    const btn = document.getElementById('go'), msg = document.getElementById('msg');
+    const pw = document.getElementById('pw').value;
+    const name = document.getElementById('name').value.trim();
+    if (pw.length < 8){ msg.className='msg err'; msg.textContent='Password must be at least 8 characters.'; return; }
+    btn.disabled = true; msg.className='msg'; msg.textContent='Creating your workspace…';
+    try {
+      await api('/api/auth/register', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ email, password: pw, name: name || null })
+      });
+      msg.className='msg ok'; msg.textContent='Done! Taking you in…';
+      location.href = '/app';
+    } catch(e){
+      btn.disabled = false;
+      msg.className='msg err';
+      msg.textContent = e.status===409 ? 'An account with this email already exists. Sign in instead.'
+                                        : (e.detail || 'Could not create your workspace.');
+    }
+  }
+  load();
+</script>
+</body>
+</html>

@@ -1,0 +1,52 @@
+[
+  {
+    "name": "anthropic",
+    "label": "Anthropic (Claude)",
+    "base_url": null,
+    "auth_env": "ANTHROPIC_API_KEY",
+    "token_target": "ANTHROPIC_API_KEY",
+    "models": ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
+    "default_model": "claude-opus-4-8"
+  },
+  {
+    "name": "zai",
+    "label": "Z.ai (GLM)",
+    "base_url": "https://api.z.ai/api/anthropic",
+    "auth_env": "ZAI_API_KEY",
+    "token_target": "ANTHROPIC_AUTH_TOKEN",
+    "models": ["glm-5.2", "glm-4.7", "glm-4.5-air"],
+    "default_model": "glm-5.2",
+    "extra_env": {"API_TIMEOUT_MS": "3000000"}
+  },
+  {
+    "name": "openai",
+    "label": "OpenAI (via LiteLLM gateway)",
+    "base_url": "http://172.17.0.1:4000",
+    "auth_env": "OPENAI_GATEWAY_KEY",
+    "token_target": "ANTHROPIC_AUTH_TOKEN",
+    "models": ["gpt-5.6-sol", "gpt-5", "gpt-5-mini", "gpt-5-nano", "o3", "o4-mini"],
+    "default_model": "gpt-5-mini",
+    "extra_env": {"API_TIMEOUT_MS": "3000000"},
+    "dynamic_models": true
+  },
+  {
+    "name": "deepinfra",
+    "label": "DeepInfra (GLM, native Anthropic endpoint)",
+    "base_url": "https://api.deepinfra.com/anthropic",
+    "auth_env": "DEEPINFRA_API_KEY",
+    "token_target": "ANTHROPIC_AUTH_TOKEN",
+    "models": ["zai-org/GLM-5.2", "zai-org/GLM-5.1", "zai-org/GLM-5"],
+    "default_model": "zai-org/GLM-5.2",
+    "extra_env": {"API_TIMEOUT_MS": "3000000"}
+  },
+  {
+    "name": "ollama",
+    "label": "Ollama Cloud (GLM, native Anthropic endpoint)",
+    "base_url": "https://ollama.com",
+    "auth_env": "OLLAMA_API_KEY",
+    "token_target": "ANTHROPIC_AUTH_TOKEN",
+    "models": ["glm-5.2:cloud", "glm-5.1:cloud", "glm-4.6:cloud"],
+    "default_model": "glm-5.2:cloud",
+    "extra_env": {"API_TIMEOUT_MS": "3000000"}
+  }
+]

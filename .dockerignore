@@ -1,0 +1,20 @@
+# Keep the build context small and free of secrets/state.
+.git
+.gitignore
+.venv
+**/__pycache__
+*.pyc
+*.pyo
+data
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+!.env.example
+routing.json
+node_modules
+.claude
+docs
+tests
+*.md

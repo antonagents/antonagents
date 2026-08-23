@@ -1,0 +1,44 @@
+# Task image: the isolated sandbox each agent run executes in.
+# Contains Python (for the Agent SDK + our runner), Node + the claude CLI
+# (the SDK shells out to it), and common tooling tasks tend to need
+# (git, DB clients, data libs). Runs as a non-root user.
+FROM node:22-bookworm-slim
+
+# --- system tooling commonly needed by agent tasks ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-venv \
+        git curl ca-certificates jq \
+        postgresql-client default-mysql-client sqlite3 \
+        build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Claude Code CLI (the Agent SDK drives this binary) ---
+RUN npm install -g @anthropic-ai/claude-code
+
+# --- anydoc: convert uploaded documents (PDF/Word/PPT/Excel/ODF/RTF/EPUB) to
+#     clean Markdown, in-sandbox (MIT, pure-Rust, no ML, no external service).
+#     Text-based extraction only — scanned/image PDFs need OCR (not bundled). ---
+RUN npm install -g @firecrawl/anydoc
+
+# --- Python deps: the Agent SDK + libs tasks commonly use ---
+# (kept in the image so tasks don't pay install time; agent can pip-install more)
+RUN python3 -m pip install --no-cache-dir --break-system-packages \
+        claude-agent-sdk \
+        psycopg2-binary pymysql pymongo sqlalchemy \
+        pandas numpy requests ddgs
+
+# --- provider-agnostic web search (built-in WebSearch only works on Anthropic) ---
+COPY websearch /usr/local/bin/websearch
+RUN chmod +x /usr/local/bin/websearch
+
+# --- non-root user (claude CLI refuses bypass-permissions mode as root) ---
+RUN useradd -m -u 10001 agent \
+    && mkdir -p /workspace \
+    && chown -R agent:agent /workspace
+COPY --chown=agent:agent run_task.py /agent/run_task.py
+
+USER agent
+ENV HOME=/home/agent
+WORKDIR /workspace
+
+ENTRYPOINT ["python3", "/agent/run_task.py"]

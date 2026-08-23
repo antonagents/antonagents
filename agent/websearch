@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""Provider-agnostic web search for agent tasks.
+
+Usage:  websearch "your query" [num_results]
+
+The built-in WebSearch tool only runs on Anthropic's backend; on other providers
+(GLM via Ollama, etc.) it returns nothing. This shell command works on any model.
+
+Backend preference: a real search API when a key is set (TAVILY_API_KEY, then
+BRAVE_API_KEY), otherwise DuckDuckGo via the free `ddgs` package (no key). Prints
+JSON: {"query", "source", "results":[{"title","url","snippet"}, ...]}.
+"""
+import json
+import os
+import sys
+
+
+def _emit(query, source, results):
+    print(json.dumps({"query": query, "source": source, "results": results},
+                     ensure_ascii=False, indent=2))
+
+
+def _tavily(query, key, n):
+    import requests
+    r = requests.post(
+        "https://api.tavily.com/search",
+        json={"api_key": key, "query": query, "max_results": n, "include_answer": False},
+        timeout=30,
+    )
+    r.raise_for_status()
+    return [{"title": x.get("title"), "url": x.get("url"),
+             "snippet": (x.get("content") or "")[:500]}
+            for x in r.json().get("results", [])]
+
+
+def _brave(query, key, n):
+    import requests
+    r = requests.get(
+        "https://api.search.brave.com/res/v1/web/search",
+        headers={"X-Subscription-Token": key, "Accept": "application/json"},
+        params={"q": query, "count": n}, timeout=30,
+    )
+    r.raise_for_status()
+    web = r.json().get("web", {}) or {}
+    return [{"title": x.get("title"), "url": x.get("url"),
+             "snippet": (x.get("description") or "")[:500]}
+            for x in web.get("results", [])]
+
+
+def _ddg(query, n):
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        from duckduckgo_search import DDGS
+    with DDGS() as d:
+        hits = list(d.text(query, max_results=n))
+    return [{"title": x.get("title"), "url": x.get("href") or x.get("url"),
+             "snippet": (x.get("body") or "")[:500]} for x in hits]
+
+
+def main():
+    if len(sys.argv) < 2 or not sys.argv[1].strip():
+        print('usage: websearch "query" [num_results]', file=sys.stderr)
+        return 2
+    query = sys.argv[1]
+    n = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else 8
+    tav, bra = os.environ.get("TAVILY_API_KEY"), os.environ.get("BRAVE_API_KEY")
+    try:
+        if tav:
+            _emit(query, "tavily", _tavily(query, tav, n))
+        elif bra:
+            _emit(query, "brave", _brave(query, bra, n))
+        else:
+            _emit(query, "duckduckgo", _ddg(query, n))
+        return 0
+    except Exception as e:
+        # if a keyed API failed, fall back to the free backend before giving up
+        try:
+            _emit(query, "duckduckgo", _ddg(query, n))
+            return 0
+        except Exception:
+            print(json.dumps({"query": query, "error": f"{type(e).__name__}: {e}",
+                              "results": []}))
+            return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
