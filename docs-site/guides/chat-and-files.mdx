@@ -1,0 +1,43 @@
+---
+title: "Chat & files"
+description: "Work with the assistant and hand it documents to use."
+---
+
+**Chat** is a general assistant that can use every tool and data source you've
+connected. Replies are rendered as Markdown, and anything the agent creates shows
+up as a downloadable artifact.
+
+## Attaching files
+
+Use the paperclip (or drag and drop) to attach files to a message. They're
+uploaded into the agent's workspace under `uploads/`, and the agent reads them
+from there on its next turn.
+
+- **Documents** (PDF, Word, and similar) are converted to Markdown automatically
+  so the agent can read them, no OCR, so scanned images of text won't extract.
+- **Spreadsheets and CSVs** can be parsed and analyzed.
+- **Images** require a **vision-capable model** (Claude or GPT). If the agent's
+  model is text-only, image input is rejected, switch the model on the chat first.
+
+<Warning>
+  If you attach an image to a chat running a text-only model, the whole turn
+  fails with a "model does not support image input" error, and because the chat
+  resumes its session, it keeps failing until you switch to a vision model. Pick a
+  vision model **before** sending images.
+</Warning>
+
+## Artifacts
+
+Files the agent writes, reports, CSVs, HTML dashboards, charts, appear as
+artifact cards you can **view** or **download**. They persist in the agent's
+workspace, so you can come back to them later from the agent's **Artifacts** panel.
+
+## Renaming and organizing chats
+
+Chats are listed in the sidebar. Rename a thread inline or from its menu, and each
+new chat gets named after its first message automatically.
+
+## Saving a chat as a routine
+
+When a chat does something you'd want to repeat, click **Save as routine** to turn
+it into a scheduled agent. See [Build a routine](/guides/build-a-routine).

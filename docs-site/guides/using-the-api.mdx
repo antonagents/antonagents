@@ -1,0 +1,84 @@
+---
+title: "Using the API"
+description: "Call your agents from your own code over the /v1 API."
+---
+
+Any agent can be driven programmatically. This is the foundation for embedding an
+agent in your product or wiring it into another system, including chat-style
+integrations.
+
+## 1. Get the agent's public id
+
+Every agent has a stable **public id** that looks like `ag_...`. Find it in the
+console on the agent's **API** panel.
+
+## 2. Create an API key
+
+In the same **API** panel, create a key. It's shown **once**, copy it now. Keys
+look like `sk_ag_...` and are **scoped to that single agent**.
+
+<Warning>
+  Treat the key like a password. It grants access to that agent only, but anyone
+  holding it can run the agent (and spend model budget). Revoke and rotate keys
+  from the same panel.
+</Warning>
+
+## 3. Send a message
+
+Send a chat message and get back a `run_id`. Note the two required headers,
+`Authorization: Bearer <key>` and `Content-Type: application/json`.
+
+```bash
+curl https://app.over-watch.in/v1/agents/ag_YOURAGENTID/chat \
+  -H "Authorization: Bearer sk_ag_YOURKEY" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Summarize yesterday'"'"'s failed orders."}'
+```
+
+```json
+{ "run_id": 244, "agent_id": "ag_YOURAGENTID" }
+```
+
+<Note>
+  The agent's session is resumed between calls, so a follow-up `chat` message
+  continues the same conversation, useful for multi-turn integrations.
+</Note>
+
+## 4. Poll for the result
+
+Fetch the run by its id (scoped by the same key) and read its events.
+
+```bash
+curl "https://app.over-watch.in/v1/runs/244?public_id=ag_YOURAGENTID" \
+  -H "Authorization: Bearer sk_ag_YOURKEY"
+```
+
+The response includes the run's status and its `events`, assistant messages, tool
+calls, and the final result. Poll until the status is `succeeded`, `failed`, or
+`interrupted`.
+
+## Rate limits
+
+Each key is rate-limited (a token bucket, sustained requests per minute with a
+burst). If you exceed it you'll get **HTTP 429** with a `Retry-After` header, back
+off and retry.
+
+## Common mistakes
+
+<AccordionGroup>
+  <Accordion title="422 'not a valid dictionary'">
+    Your request wasn't sent as JSON. Add `-H "Content-Type: application/json"`,
+    curl's `-d` defaults to form encoding.
+  </Accordion>
+  <Accordion title="401 invalid or revoked API key">
+    Use the full key including the `sk_ag_` prefix, not the key's display name,
+    and make sure it hasn't been revoked.
+  </Accordion>
+  <Accordion title="404 run not found">
+    The `public_id` must match the agent that owns the run, and the key must be
+    scoped to that agent. Pass the real run id, not a placeholder.
+  </Accordion>
+</AccordionGroup>
+
+See the full [API reference](/api-reference/introduction) for the complete
+request and response schemas.

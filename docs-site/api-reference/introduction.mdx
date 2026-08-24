@@ -1,0 +1,57 @@
+---
+title: "API reference"
+description: "Call your Antonagents agents over the /v1 API."
+---
+
+The `/v1` API lets you drive any agent programmatically. It's the same engine as
+the console, exposed for your own integrations.
+
+## Base URL
+
+```
+https://app.over-watch.in
+```
+
+<Note>
+  The base URL moves to the `antonagents.com` domain after the domain cutover.
+  Existing links keep working until then.
+</Note>
+
+## Authentication
+
+Every request uses an **agent-scoped API key** as a bearer token:
+
+```
+Authorization: Bearer sk_ag_...
+```
+
+- Create keys in the console on an agent's **API** panel (shown once, copy it).
+- A key is scoped to **one agent** and can be revoked/rotated any time.
+- JSON endpoints also require `Content-Type: application/json`.
+
+## The shape of a call
+
+Agent calls are **asynchronous**: you start a run and poll for its result.
+
+<Steps>
+  <Step title="Start a run">
+    `POST /v1/agents/{public_id}/chat` (send a message) or
+    `POST /v1/agents/{public_id}/run` (use the agent's default instruction).
+    Returns a `run_id`.
+  </Step>
+  <Step title="Poll the run">
+    `GET /v1/runs/{run_id}?public_id={public_id}` until its status is terminal
+    (`succeeded`, `failed`, `interrupted`). The response carries the run's events.
+  </Step>
+</Steps>
+
+## Rate limiting
+
+Each key is limited by a token bucket (sustained requests per minute with a
+burst). Over the limit returns **429** with a `Retry-After` header.
+
+## Endpoints
+
+Use the reference pages in this section (generated from the live OpenAPI spec) to
+see full request and response schemas and to try calls with the built-in
+playground. For a narrative walkthrough, see [Using the API](/guides/using-the-api).

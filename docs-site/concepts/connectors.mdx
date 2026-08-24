@@ -1,0 +1,45 @@
+---
+title: "Connectors"
+description: "Let agents act in Slack, Gmail, Linear, and more, as you."
+---
+
+**Connectors** give agents access to your SaaS tools, Slack, Gmail, Linear, and
+others, so they can read and act in the systems you already use. Connectors are
+managed through [Composio](https://composio.dev), which handles the OAuth and
+issues per-user tool access.
+
+## Connecting an account
+
+From the **Connectors** view, connect an account (for example Slack). You approve
+the OAuth flow in a popup; the token is held by the connector provider, not stored
+in the Antonagents database. Once connected, agents you build can use that
+toolkit **acting as you**.
+
+## How agents get the tools
+
+When a run starts, the agent is provisioned with the toolkits you've connected,
+exposed through a single MCP tool router rather than hundreds of raw tool
+definitions. This keeps the agent's context small and fast even when many tools
+are available.
+
+<Note>
+  Agents see connector tools as `mcp__...` tools and call them like any other
+  tool, "post to #eng-billing", "create a Linear issue", "summarize my unread
+  email".
+</Note>
+
+## Isolation
+
+Connectors are per user: an agent owned by someone who hasn't connected Slack
+gets no Slack tools. One user's connected accounts are never available to another
+user's agents.
+
+## Security caveat (self-hosting)
+
+<Warning>
+  On a self-hosted instance, the connector configuration injected into task
+  containers currently carries an **org-wide** provider key. A malicious or
+  prompt-injected task could attempt to exfiltrate it. **Only enable connectors
+  when every user on the instance is trusted.** See `docs/SECURITY.md` in the
+  repository for the current threat model.
+</Warning>

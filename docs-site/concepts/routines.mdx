@@ -1,0 +1,49 @@
+---
+title: "Routines"
+description: "Agents that run on a schedule and deliver work while you sleep."
+---
+
+A **routine** is an agent with a schedule. Instead of you messaging it, it fires
+on its own, on a cron expression or a simple interval, runs its task, and can
+alert you with the result.
+
+## Build it in a chat, then schedule it
+
+The reliable way to create a good routine is to **get it working in chat first**,
+then schedule it:
+
+1. In **Chat**, iterate on the task until the agent does exactly what you want.
+2. Click **Save as routine**, the builder is prefilled with the instruction,
+   tools, and data from your chat.
+3. Pick a schedule and hit **Create & test run** to confirm it before it goes live.
+
+This beats configuring a routine from scratch, you've already seen it succeed.
+
+## Scheduling
+
+Choose a schedule when you create or edit a routine:
+
+- **Presets** — friendly options like "every weekday at 8am" or "every hour".
+- **Cron** — a standard cron expression for full control.
+- **Interval** — run every _N_ seconds.
+
+Routines can be **paused** and **resumed** without losing their configuration,
+and the console shows the **next run** time.
+
+<Warning>
+  Ask an agent in a normal chat to "set up a cron job" and it can't, scheduling
+  lives in the platform, not inside a sandboxed run. Use **Save as routine**
+  instead; the agent is guided toward that path.
+</Warning>
+
+## Alerts
+
+Add **alert rules** to a routine so you're notified about its runs, for example,
+only when it fails, or every time it finishes. Alerts appear in the console's
+Alerts view.
+
+## Interacting with a routine
+
+A routine is still an agent, so you can open it and **chat with it directly** (a
+turn against the same agent, its context, tools, and workspace) to inspect or
+adjust what it's doing, without waiting for the next scheduled run.

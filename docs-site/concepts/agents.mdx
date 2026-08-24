@@ -1,0 +1,60 @@
+---
+title: "Agents & runs"
+description: "The core model: a reusable agent, executed as isolated runs."
+---
+
+## Agents
+
+An **agent** is a persistent, reusable configuration. It holds:
+
+- a **name** and an **instruction** (what it should do),
+- the **connectors**, **skills**, and **data sources** it's allowed to use,
+- an optional **model** choice (or let the router pick),
+- and, for routines, a **schedule**.
+
+There are two kinds of agent, they share the same engine:
+
+- **Chat** — a conversational assistant you message directly. It resumes its
+  session across turns, so it remembers the conversation.
+- **Routine** — an agent with a schedule that fires on its own (see
+  [Routines](/concepts/routines)).
+
+## Runs
+
+Every execution of an agent is a **run**: a chat message, a manual **Run**, or a
+scheduled fire. Each run:
+
+1. executes inside a fresh, isolated container (see [Sandbox](#the-sandbox)),
+2. streams **events** as it works, thinking, tool calls, tool results, and the
+   assistant's messages,
+3. and can produce **artifacts**, files it writes to its workspace that you can
+   view or download.
+
+<Note>
+  A run's full event history is stored, so you can reopen a chat or inspect a
+  routine's past runs at any time.
+</Note>
+
+## The sandbox
+
+Each run is a short-lived Docker container:
+
+- runs as a **non-root** user,
+- has **memory, CPU, and process limits**,
+- is removed when the run finishes,
+- and mounts a **per-agent persistent workspace** so files and the conversation
+  transcript survive between runs.
+
+This is the isolation boundary: one agent cannot see another agent's workspace,
+and a run cannot outlive its limits.
+
+## Model routing
+
+You can pin a specific model per agent, or leave it on **auto** and let the
+router choose a provider and model per task. Whatever is chosen, the container is
+injected with only that provider's endpoint and key, never the full set.
+
+<Tip>
+  Vision matters: if an agent needs to read images or screenshots, pick a
+  vision-capable model (Claude or GPT). Text-only models will reject image input.
+</Tip>

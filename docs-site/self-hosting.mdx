@@ -1,0 +1,92 @@
+---
+title: "Self-hosting"
+description: "Run the whole platform on your own machine with Docker."
+---
+
+Antonagents is built to be self-hosted, your data, credentials, and model keys
+stay on infrastructure you control. This page is the short version; the
+[repository README](https://github.com/antonagents/antonagents) has the full
+detail and stays authoritative.
+
+## Requirements
+
+- **Docker** (the engine runs each task in an isolated container).
+- At least one **model provider key** (Anthropic, or an OpenAI-compatible / GLM endpoint).
+- A machine with a couple of CPU cores and a few GB of RAM to start.
+
+## Get it running
+
+<Steps>
+  <Step title="Clone the repo">
+    ```bash
+    git clone https://github.com/antonagents/antonagents.git
+    cd antonagents
+    ```
+  </Step>
+  <Step title="Configure your environment">
+    Copy the example env file and fill in at least one provider key.
+    ```bash
+    cp .env.example .env
+    # edit .env — set a provider key and a long, stable SESSION_SECRET
+    ```
+    Generate a durable secret:
+    ```bash
+    python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+    ```
+    <Warning>
+      `SUPERAGENT_SESSION_SECRET` signs sessions **and** keys the at-rest
+      encryption of stored database credentials and agent env. Set a long, random,
+      **stable** value and back it up, if it changes, encrypted data becomes
+      unrecoverable.
+    </Warning>
+  </Step>
+  <Step title="Build the task image">
+    Each run executes inside this sandbox image.
+    ```bash
+    docker build -t superagent-task:latest -f docker/Dockerfile.task agent/
+    ```
+  </Step>
+  <Step title="Start it">
+    ```bash
+    make up
+    ```
+    Then open the console on the port you configured (default `8080`).
+  </Step>
+</Steps>
+
+<Note>
+  Internal identifiers (the `SUPERAGENT_*` environment prefix, the
+  `superagent-task` image name) intentionally keep their original names for
+  backward compatibility, even though the product is now Antonagents.
+</Note>
+
+## Providers
+
+The router picks a provider and model per task; each run's container is injected
+with **only** the chosen provider's endpoint and key. Set the keys you want
+available in `.env`:
+
+| Provider | How |
+| --- | --- |
+| **Anthropic (Claude)** | Native endpoint, set `ANTHROPIC_API_KEY`. |
+| **GLM (Z.ai)** | Anthropic-compatible endpoint, set `ZAI_API_KEY`. |
+| **OpenAI / others** | Via the optional LiteLLM gateway (`docker compose --profile litellm up`). Reasoning models only. |
+
+Provider keys are **instance-wide**: whoever operates the deployment sets them,
+and all agents share them.
+
+## Going multi-user
+
+The API requires a logged-in user, and every workspace is owned by its creator
+and invisible to everyone else. For shared or hosted instances:
+
+- Set `SUPERAGENT_SIGNUP=invite` to require an invitation before anyone can register.
+- Set `SUPERAGENT_OPERATORS` to the emails allowed to onboard **new teams** via
+  self-serve signup links (each new user gets their own isolated workspace).
+
+## Security note
+
+If you enable connectors (Composio), the per-user tool configuration currently
+carries an org-wide key into task containers, only enable connectors when every
+user on the instance is trusted. See `docs/SECURITY.md` in the repository for the
+current threat model and hardening guidance.

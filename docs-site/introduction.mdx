@@ -1,0 +1,68 @@
+---
+title: "Introduction"
+description: "Self-hostable AI agents that do your team's work, on your own infrastructure."
+---
+
+**Antonagents** is a self-hostable, multi-tenant platform for building AI agents
+that don't just chat, they **act**: they run on a schedule, use your team's tools,
+query your data, and deliver finished work. Everything runs on infrastructure you
+control, so your data never has to leave it.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Create your first agent and watch it finish a task, in a few minutes.
+  </Card>
+  <Card title="Self-hosting" icon="server" href="/self-hosting">
+    Run the whole platform on your own machine with Docker.
+  </Card>
+  <Card title="Core concepts" icon="book" href="/concepts/agents">
+    Agents, routines, connectors, skills, and data sources.
+  </Card>
+  <Card title="API reference" icon="code" href="/api-reference/introduction">
+    Call your agents programmatically over the `/v1` API.
+  </Card>
+</CardGroup>
+
+## What makes it different
+
+<CardGroup cols={2}>
+  <Card title="It acts, not just answers" icon="bolt">
+    Agents run real tasks end-to-end in a sandbox, on a schedule or on demand,
+    and produce artifacts you can download.
+  </Card>
+  <Card title="On your own infrastructure" icon="lock">
+    Self-host the whole stack. Your data, credentials, and model keys stay on
+    hardware you control, which matters for data-sensitive teams.
+  </Card>
+  <Card title="Bring your own models" icon="shuffle">
+    Route across providers, Anthropic Claude, GLM, and OpenAI-compatible models,
+    per task. No lock-in to a single vendor.
+  </Card>
+  <Card title="Your tools and data" icon="plug">
+    Connect Slack, Gmail, Linear and more, plus read-only database sources, so
+    agents work with the systems you already use.
+  </Card>
+</CardGroup>
+
+## How it fits together
+
+An **agent** is a reusable configuration, a name, an instruction, the tools and
+data it can use, and optionally a schedule. Each time it runs (a chat message, a
+manual trigger, or a scheduled fire) is a **run**, executed inside an isolated
+container.
+
+```
+Org (your team)
+ └─ Agent  ── instruction + connectors + skills + data sources
+      ├─ Chat run      (you message it)
+      ├─ Manual run    (you hit "Run")
+      └─ Scheduled run (a routine fires on cron/interval)
+           └─ each run executes in a sandboxed container → events + artifacts
+```
+
+<Note>
+  Antonagents is source-available under the **Functional Source License**
+  (FSL-1.1-Apache-2.0): self-host, use, and modify it freely for internal use,
+  education, and research. Each release converts to Apache 2.0 two years after it
+  ships. See the [repository](https://github.com/antonagents/antonagents).
+</Note>

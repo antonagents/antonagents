@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 40" width="220" height="40" role="img" aria-label="Antonagents">
+  <rect x="3.5" y="9.5" width="21" height="21" rx="6" fill="none" stroke="#e8eaed" stroke-width="2.5"/>
+  <path d="M11 15 L18 20 L11 25" fill="none" stroke="#5b8cff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="36" y="27" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif" font-size="20" font-weight="600" fill="#e8eaed">anton<tspan fill="#5b8cff">agents</tspan></text>
+</svg>

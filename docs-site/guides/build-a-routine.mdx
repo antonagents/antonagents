@@ -1,0 +1,62 @@
+---
+title: "Build a routine"
+description: "From a one-off chat to a scheduled automation that runs itself."
+---
+
+The best routines start life as a chat you got working, then get scheduled. This
+guide walks the full flow with a concrete example: a **morning ops briefing**.
+
+## 1. Prototype it in chat
+
+Open a new **Chat** and describe the whole task, including where the data comes
+from and where the result should go:
+
+```text
+Every morning: pull yesterday's signups and failed payments from the app
+database, summarize the top themes in 5 bullets, and draft a short note I can
+post to #ops. Keep it under 150 words.
+```
+
+Let it run. Attach any files it needs, connect Slack and the database if you
+haven't. Iterate until the output is exactly what you'd want to receive at 8am.
+
+<Tip>
+  Be specific about format and length. "5 bullets, under 150 words" produces a
+  far more useful recurring artifact than "summarize it".
+</Tip>
+
+## 2. Save it as a routine
+
+Click **Save as routine**. The builder opens prefilled with:
+
+- the **instruction** from your chat,
+- the **connectors**, **skills**, and **data sources** you used,
+- and the agent's **model** choice.
+
+Give it a clear name like `Morning Ops Briefing`.
+
+## 3. Schedule and test
+
+Pick when it runs:
+
+- a preset such as **every weekday at 8am**, or
+- a **cron** expression for full control.
+
+Then choose **Create & test run** to fire it once immediately and confirm the
+output before it goes live.
+
+## 4. Add an alert
+
+Add an **alert rule** so the result reaches you where you want it, and so you hear
+about failures. For a briefing you might alert on **every run**; for a silent
+guardrail routine you might alert **only on failure**.
+
+## 5. Iterate any time
+
+A routine is still an agent. Open it and **chat with it** to adjust the
+instruction or debug a bad run, no need to wait for the next scheduled fire.
+
+<Check>
+  You now have an agent that does real work on a schedule and tells you about it,
+  built by demonstrating the task once, not by configuring it blind.
+</Check>

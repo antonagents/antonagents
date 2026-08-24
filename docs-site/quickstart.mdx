@@ -1,0 +1,78 @@
+---
+title: "Quickstart"
+description: "Create your first agent and watch it finish a task."
+---
+
+This walks you through the fastest path to value: open the console, describe a
+task in chat, then turn it into a scheduled routine.
+
+<Note>
+  Antonagents is invite-only on the hosted instance. If you don't have access
+  yet, [book a demo](https://calendar.app.google/ekAS5HjyAcEJQr258) or ask an
+  operator for a signup link.
+</Note>
+
+## 1. Open the console
+
+Go to your instance and sign in. The console has a left sidebar:
+
+- **Chat** — a general assistant that can use every tool and data source you've connected.
+- **Routines** — agents that run on a schedule.
+- **Connectors**, **Data sources**, **Alerts**, **Members** — everything else.
+
+## 2. Ask it to do something real
+
+Start a new chat and give it a concrete task, not just a question. For example:
+
+```text
+Pull yesterday's failed orders from the orders database, group them by reason,
+and write a short summary I can paste into Slack.
+```
+
+The agent works in a sandbox: it can run code, read files, browse the web, and,
+if you've connected them, use your tools and databases. You'll see its progress
+stream in, and any files it produces (reports, CSVs, HTML dashboards) show up as
+downloadable **artifacts**.
+
+<Tip>
+  Attach a file (PDF, spreadsheet, image, doc) with the paperclip. The agent
+  reads it from its workspace, documents are converted to Markdown automatically.
+</Tip>
+
+## 3. Turn it into a routine
+
+Happy with what it did? Click **Save as routine**, pick a schedule (a friendly
+preset like "every weekday at 8am", or a cron expression), and hit
+**Create & test run**. Now it runs on its own and can alert you when it finishes.
+
+<Steps>
+  <Step title="Describe the task in chat">
+    Iterate until the agent does exactly what you want.
+  </Step>
+  <Step title="Save as routine">
+    The builder is prefilled from your chat, instruction, tools, and data.
+  </Step>
+  <Step title="Schedule and test">
+    Choose when it runs and do a test run to confirm before it goes live.
+  </Step>
+  <Step title="Get notified">
+    Add an alert so you hear about it only when it matters.
+  </Step>
+</Steps>
+
+## 4. (Optional) Call it from your own code
+
+Every agent has a stable public id and can be reached over the API with an
+agent-scoped key. See [Using the API](/guides/using-the-api) and the
+[API reference](/api-reference/introduction).
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Core concepts" icon="book" href="/concepts/agents">
+    Understand agents, routines, connectors, skills, and data sources.
+  </Card>
+  <Card title="Build a routine" icon="clock" href="/guides/build-a-routine">
+    A deeper walkthrough of the build-in-chat, then schedule flow.
+  </Card>
+</CardGroup>

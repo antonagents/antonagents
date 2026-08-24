@@ -1,0 +1,37 @@
+---
+title: "Data sources"
+description: "Give agents read-only access to your databases."
+---
+
+**Data sources** let agents query your databases directly, so they can work with
+real business data (orders, tickets, customers) instead of copy-pasted exports.
+
+## Read-only by design
+
+Data sources are connected as **read-only**. Agents can query them to gather
+facts and build reports, but the connection is not a path to mutate your
+production data.
+
+## How credentials are stored
+
+When you add a data source, its connection string (DSN) is **encrypted at rest**
+using a key derived from your instance's session secret. The plaintext DSN is
+never stored, and it's injected into a run's container only when that agent is
+allowed to use the source.
+
+<Warning>
+  Because the encryption key is derived from `SUPERAGENT_SESSION_SECRET`, keep
+  that value stable and backed up. If it changes, stored data-source credentials
+  become unrecoverable.
+</Warning>
+
+## Attaching a source to an agent
+
+Connect a database once from the **Data sources** view, then attach it to any
+agent that should use it. At run time the agent gets a scoped way to query that
+source, and only the sources you attached.
+
+<Tip>
+  Combine a data source with a routine and a connector for high-value automations:
+  query the database, summarize, and post the result to Slack, on a schedule.
+</Tip>
