@@ -25,6 +25,7 @@
     --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px;
     --r-sm:6px; --r-md:10px; --r-lg:14px; --r-pill:999px;
     --ease:cubic-bezier(.2,.7,.2,1);
+    --blur:saturate(1.4) blur(14px);   /* translucent chrome (Apple materials) — overridden by a11y fallbacks */
     --z-overlay:100;
   }
   /* ---- palette: dark (default) — cool graphite, biased ~255deg ---- */
@@ -34,6 +35,7 @@
     --fg:oklch(.955 .006 258); --fg-2:oklch(.82 .01 258); --muted:oklch(.66 .014 258);
     --accent:oklch(.74 .13 256); --accent-2:oklch(.8 .12 256); --accent-ink:oklch(.16 .03 258);
     --accent-soft:oklch(.74 .13 256 / .13);
+    --glass:oklch(.205 .016 258 / .72); --glass-strong:oklch(.21 .016 258 / .93);
     --ok:oklch(.8 .15 158); --warn:oklch(.83 .15 88); --err:oklch(.72 .18 25);
     --ok-soft:oklch(.8 .15 158 / .14); --warn-soft:oklch(.83 .15 88 / .15); --err-soft:oklch(.72 .18 25 / .15);
     --shadow:0 1px 2px oklch(0 0 0 / .4), 0 12px 32px -12px oklch(0 0 0 / .55);
@@ -45,6 +47,7 @@
     --fg:oklch(.24 .02 258); --fg-2:oklch(.36 .018 258); --muted:oklch(.5 .016 258);
     --accent:oklch(.54 .16 258); --accent-2:oklch(.48 .17 258); --accent-ink:oklch(.99 .01 258);
     --accent-soft:oklch(.54 .16 258 / .1);
+    --glass:oklch(1 0 0 / .68); --glass-strong:oklch(1 0 0 / .92);
     --ok:oklch(.55 .15 158); --warn:oklch(.62 .14 74); --err:oklch(.55 .2 27);
     --ok-soft:oklch(.55 .15 158 / .12); --warn-soft:oklch(.62 .14 74 / .14); --err-soft:oklch(.55 .2 27 / .12);
     --shadow:0 1px 2px oklch(.5 .02 258 / .12), 0 14px 34px -16px oklch(.4 .04 258 / .28);
@@ -56,6 +59,7 @@
     --fg:oklch(.955 .006 258); --fg-2:oklch(.82 .01 258); --muted:oklch(.66 .014 258);
     --accent:oklch(.74 .13 256); --accent-2:oklch(.8 .12 256); --accent-ink:oklch(.16 .03 258);
     --accent-soft:oklch(.74 .13 256 / .13);
+    --glass:oklch(.205 .016 258 / .72); --glass-strong:oklch(.21 .016 258 / .93);
     --ok:oklch(.8 .15 158); --warn:oklch(.83 .15 88); --err:oklch(.72 .18 25);
     --ok-soft:oklch(.8 .15 158 / .14); --warn-soft:oklch(.83 .15 88 / .15); --err-soft:oklch(.72 .18 25 / .15);
     --shadow:0 1px 2px oklch(0 0 0 / .4), 0 12px 32px -12px oklch(0 0 0 / .55);
@@ -67,6 +71,7 @@
     --fg:oklch(.24 .02 258); --fg-2:oklch(.36 .018 258); --muted:oklch(.5 .016 258);
     --accent:oklch(.54 .16 258); --accent-2:oklch(.48 .17 258); --accent-ink:oklch(.99 .01 258);
     --accent-soft:oklch(.54 .16 258 / .1);
+    --glass:oklch(1 0 0 / .68); --glass-strong:oklch(1 0 0 / .92);
     --ok:oklch(.55 .15 158); --warn:oklch(.62 .14 74); --err:oklch(.55 .2 27);
     --ok-soft:oklch(.55 .15 158 / .12); --warn-soft:oklch(.62 .14 74 / .14); --err-soft:oklch(.55 .2 27 / .12);
     --shadow:0 1px 2px oklch(.5 .02 258 / .12), 0 14px 34px -16px oklch(.4 .04 258 / .28);
@@ -86,7 +91,8 @@
 
   /* ---- header ---- */
   header{ display:flex; align-items:center; gap:var(--sp-4); padding:var(--sp-3) var(--sp-5);
-    border-bottom:1px solid var(--line); background:var(--surface); }
+    border-bottom:1px solid var(--line); background:var(--glass);
+    backdrop-filter:var(--blur); -webkit-backdrop-filter:var(--blur); }
   .brand{ display:flex; align-items:center; gap:var(--sp-3); }
   .brand .mark{ width:19px; height:19px; flex:none;
     background:var(--accent);
@@ -135,7 +141,8 @@
   #shell.nav-collapsed .navitem{ justify-content:center; padding:9px 0; }
   #shell.nav-collapsed .nl,#shell.nav-collapsed .navcount{ display:none; }
   #sidebar{ border-right:1px solid var(--line); padding:var(--sp-4) var(--sp-3); display:flex;
-    flex-direction:column; gap:2px; background:var(--surface); overflow:hidden;
+    flex-direction:column; gap:2px; background:var(--glass); overflow:hidden;
+    backdrop-filter:var(--blur); -webkit-backdrop-filter:var(--blur);
     white-space:nowrap; transition:opacity .15s var(--ease); }
   .navitem{ display:flex; align-items:center; gap:var(--sp-3); width:100%; text-align:left;
     background:transparent; color:var(--fg-2); border:0; border-radius:var(--r-md);
@@ -279,9 +286,12 @@
      stack above regular modals (which all share z-index:90) */
   #confirmModal{ z-index:200; }
   .modal{ position:fixed; inset:0; z-index:90; display:none; align-items:flex-start; justify-content:center;
-    background:oklch(0 0 0 / .55); padding:7vh var(--sp-5) var(--sp-5); }
+    background:oklch(0 0 0 / .44); backdrop-filter:blur(7px); -webkit-backdrop-filter:blur(7px);
+    padding:7vh var(--sp-5) var(--sp-5); }
   .modal-card{ width:760px; max-width:100%; max-height:82vh; display:flex; flex-direction:column;
-    background:var(--surface); border:1px solid var(--line); border-radius:var(--r-lg); box-shadow:var(--shadow); overflow:hidden; }
+    background:var(--glass-strong); backdrop-filter:var(--blur); -webkit-backdrop-filter:var(--blur);
+    border:1px solid var(--line-strong); border-radius:var(--r-lg);
+    box-shadow:0 2px 6px oklch(0 0 0 / .3), 0 30px 70px -24px oklch(0 0 0 / .6); overflow:hidden; }
   .modal-head{ display:flex; align-items:center; gap:var(--sp-3); padding:var(--sp-4) var(--sp-5); border-bottom:1px solid var(--line); }
   .modal-head h2{ font-family:var(--font-sans); font-size:var(--fs-md); font-weight:600; letter-spacing:-.01em; margin:0; }
   .modal-head .count{ font-family:var(--font-mono); font-size:var(--fs-xs); color:var(--muted); }
@@ -627,6 +637,20 @@
   #log{ scroll-behavior:smooth; }
   .conn-card,.tpl,.ds-row,.pick{ transition:border-color .15s var(--ease), background .15s var(--ease), transform .12s var(--ease); }
   .conn-card:hover,.pick:hover{ transform:translateY(-1px); }
+  /* --- accessibility: honor reduced-transparency & increased-contrast (Apple #14) --- */
+  @media (prefers-reduced-transparency:reduce){
+    :root{ --glass:var(--surface); --glass-strong:var(--surface); --blur:none; }
+    .modal{ background:oklch(0 0 0 / .62); backdrop-filter:none; -webkit-backdrop-filter:none; }
+  }
+  @media (prefers-contrast:more){
+    :root{ --glass:var(--surface); --glass-strong:var(--surface); --blur:none; --line:var(--line-strong); }
+    .modal{ background:oklch(0 0 0 / .7); backdrop-filter:none; -webkit-backdrop-filter:none; }
+  }
+  /* browsers without backdrop-filter: keep chrome solid, never see-through */
+  @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+    :root{ --glass:var(--surface); --glass-strong:var(--surface); }
+    .modal{ background:oklch(0 0 0 / .6); }
+  }
   @media (prefers-reduced-motion:reduce){
     *{ animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; }
   }
