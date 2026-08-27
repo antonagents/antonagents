@@ -637,6 +637,50 @@
   #log{ scroll-behavior:smooth; }
   .conn-card,.tpl,.ds-row,.pick{ transition:border-color .15s var(--ease), background .15s var(--ease), transform .12s var(--ease); }
   .conn-card:hover,.pick:hover{ transform:translateY(-1px); }
+  /* ---- observability ---- */
+  .seg{ display:inline-flex; gap:2px; padding:3px; background:var(--surface-2); border:1px solid var(--line);
+    border-radius:var(--r-md); margin-bottom:var(--sp-5); }
+  .seg button{ border:0; background:transparent; color:var(--muted); font-family:var(--font-sans);
+    font-size:var(--fs-xs); font-weight:500; padding:5px 12px; border-radius:7px; cursor:pointer;
+    transition:background .12s var(--ease), color .12s var(--ease); }
+  .seg button.on{ background:var(--surface); color:var(--fg); box-shadow:var(--shadow); }
+  .obs-cards{ display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:var(--sp-3); }
+  .obs-card{ background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md); padding:var(--sp-4); }
+  .obs-card .oc-l{ font-size:var(--fs-xs); color:var(--muted); font-weight:500; }
+  .obs-card .oc-v{ font-size:1.6rem; font-weight:600; letter-spacing:-.02em; margin-top:6px; font-variant-numeric:tabular-nums; }
+  .obs-card .oc-s{ font-size:var(--fs-xs); color:var(--muted); margin-top:4px; }
+  .obs-h3{ font-size:var(--fs-sm); font-weight:600; margin:0 0 var(--sp-3); }
+  .obs-agrow{ display:grid; grid-template-columns:2fr 1fr 1fr 1fr 1fr; gap:var(--sp-3); align-items:center;
+    padding:9px 6px; border-bottom:1px solid var(--line); font-size:var(--fs-sm); font-variant-numeric:tabular-nums; }
+  .obs-agrow span:not(.ag-nm){ color:var(--fg-2); text-align:right; }
+  .obs-agrow .ag-nm{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .obs-aghead{ color:var(--muted); font-size:var(--fs-xs); text-transform:uppercase; letter-spacing:.04em; }
+  .obs-aghead span:not(.ag-nm){ color:var(--muted); }
+  .obs-actbar{ display:flex; align-items:center; justify-content:space-between; margin:var(--sp-6) 0 var(--sp-3); gap:var(--sp-3); }
+  .obs-filters{ display:flex; gap:var(--sp-2); align-items:center; }
+  .act-row{ display:grid; grid-template-columns:78px 120px 1fr 130px 130px; gap:var(--sp-3); align-items:center;
+    padding:8px 6px; border-bottom:1px solid var(--line); font-size:var(--fs-xs); }
+  .act-row .act-tgt{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--font-mono); color:var(--fg-2); }
+  .act-row .act-act{ color:var(--fg); font-weight:500; }
+  .act-row .act-ag{ color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .act-row .act-ts{ color:var(--muted); font-family:var(--font-mono); text-align:right; }
+  .cat{ font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.03em;
+    padding:2px 7px; border-radius:var(--r-pill); text-align:center; font-weight:600; }
+  .cat-data{ background:var(--accent-soft); color:var(--accent); }
+  .cat-app{ background:oklch(.7 .15 300 / .16); color:oklch(.7 .15 300); }
+  .cat-web{ background:oklch(.7 .13 220 / .16); color:oklch(.7 .13 220); }
+  .cat-files{ background:var(--ok-soft); color:var(--ok); }
+  .cat-shell{ background:var(--surface-2); color:var(--muted); }
+  .cat-task{ background:var(--warn-soft); color:var(--warn); }
+  .cat-skill{ background:oklch(.72 .15 330 / .16); color:oklch(.72 .15 330); }
+  .cat-other{ background:var(--surface-2); color:var(--muted); }
+  .fmeta.err{ color:var(--err); }
+  @media (max-width:720px){
+    .act-row{ grid-template-columns:70px 1fr; }
+    .act-row .act-tgt,.act-row .act-ts{ display:none; }
+    .obs-agrow{ grid-template-columns:2fr 1fr 1fr; } .obs-agrow span:nth-child(4),.obs-agrow span:nth-child(5){ display:none; }
+  }
+
   /* --- accessibility: honor reduced-transparency & increased-contrast (Apple #14) --- */
   @media (prefers-reduced-transparency:reduce){
     :root{ --glass:var(--surface); --glass-strong:var(--surface); --blur:none; }
@@ -869,6 +913,7 @@
     <button class="navitem" data-view="data" onclick="showView('data')" title="Data sources"><span class="ni">▤</span><span class="nl">Data sources</span></button>
     <button class="navitem" data-view="alerts" onclick="showView('alerts')" title="Alerts"><span class="ni">◔</span><span class="nl">Alerts</span><span class="navcount" id="navAlerts"></span></button>
     <button class="navitem" data-view="members" onclick="showView('members')" title="Members"><span class="ni">◍</span><span class="nl">Members</span></button>
+    <button class="navitem" data-view="observability" id="navObs" onclick="showView('observability')" title="Observability" style="display:none"><span class="ni">◎</span><span class="nl">Observability</span></button>
     <div id="chatPane">
       <button class="full" onclick="newChat()">+ New chat</button>
       <div id="chatThreads"></div>
@@ -1081,6 +1126,39 @@
           <div class="hint" id="signupMsg" style="margin-top:8px"></div>
           <div id="signupList" style="margin-top:18px"></div>
         </div>
+      </div>
+    </section>
+
+    <section id="view-observability" class="view">
+      <div class="page">
+        <div class="page-head"><h2>Observability</h2><span class="count" id="obsRange"></span></div>
+        <p class="page-sub">Oversight of your agents, org-wide: health, cost, and a full activity audit of what every agent did.</p>
+        <div class="seg" id="obsDays">
+          <button data-d="7" onclick="setObsDays(7)">7 days</button>
+          <button data-d="30" class="on" onclick="setObsDays(30)">30 days</button>
+          <button data-d="90" onclick="setObsDays(90)">90 days</button>
+        </div>
+        <div class="obs-cards" id="obsCards"></div>
+        <div id="obsErrors" style="margin-top:22px"></div>
+        <div id="obsAgentsWrap" style="margin-top:22px"></div>
+        <div class="obs-actbar">
+          <h3 class="obs-h3" style="margin:0">Activity audit</h3>
+          <div class="obs-filters">
+            <select id="obsCat" onchange="renderActivity()">
+              <option value="">All activity</option>
+              <option value="data">Data sources</option>
+              <option value="app">Apps / connectors</option>
+              <option value="web">Web</option>
+              <option value="files">Files</option>
+              <option value="shell">Shell</option>
+              <option value="task">Tasks</option>
+              <option value="skill">Skills</option>
+            </select>
+            <button class="ghost" onclick="exportActivity()">Export CSV</button>
+          </div>
+        </div>
+        <div id="obsActivity"></div>
+        <div style="text-align:center;margin-top:14px"><button class="ghost" id="obsMore" style="display:none" onclick="loadMoreActivity()">Load more</button></div>
       </div>
     </section>
   </div>
@@ -1307,7 +1385,66 @@ function showView(name, opts){
   else if (name==='data'){ loadDbEngines(); loadDbs(); }
   else if (name==='alerts'){ openAlertsView(); }
   else if (name==='members'){ loadMembers(); }
+  else if (name==='observability'){ loadObservability(); }
 }
+
+// ---- observability: ops health + activity audit (admin) ----
+let OBS_DAYS = 30, OBS_ACTIVITY = [], OBS_OFFSET = 0, OBS_NEXT = null;
+const _secs = s => s>=60 ? (s/60).toFixed(1)+'m' : Math.round(s)+'s';
+async function loadObservability(){ await Promise.all([loadObsHealth(), reloadActivity()]); }
+async function loadObsHealth(){
+  let d; try { d = await api('/api/observability/health?days='+OBS_DAYS); } catch(e){ $('#obsCards').innerHTML='<div class="hint err">'+esc(e.detail||'failed to load')+'</div>'; return; }
+  $('#obsRange').textContent = 'last '+OBS_DAYS+' days';
+  const card = (l,v,s) => `<div class="obs-card"><div class="oc-l">${l}</div><div class="oc-v">${v}</div>${s?'<div class="oc-s">'+s+'</div>':''}</div>`;
+  $('#obsCards').innerHTML =
+    card('Runs', d.total, `${d.succeeded} ok · ${d.failed} failed`) +
+    card('Success rate', d.success_rate+'%', d.interrupted?d.interrupted+' interrupted':'') +
+    card('Latency p50 / p95', _secs(d.latency.p50)+' / '+_secs(d.latency.p95), 'max '+_secs(d.latency.max)) +
+    card('Cost', '$'+(d.cost_usd||0).toFixed(2), 'provider-approx');
+  $('#obsErrors').innerHTML = d.errors.length
+    ? '<h3 class="obs-h3">Recent failures</h3>' + d.errors.map(e =>
+        `<div class="filerow"><span class="fname" style="flex:none;min-width:130px">${esc(e.agent_name||('#'+e.agent_id))}</span>
+         <span class="fmeta err" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(e.error||e.status)}</span>
+         <span class="fmeta">#${e.run_id}</span></div>`).join('')
+    : '';
+  $('#obsAgentsWrap').innerHTML = d.agents.length
+    ? ('<h3 class="obs-h3">By agent</h3><div class="obs-agrow obs-aghead"><span class="ag-nm">Agent</span><span>Runs</span><span>Success</span><span>Avg time</span><span>Cost</span></div>' +
+       d.agents.map(a => `<div class="obs-agrow"><span class="ag-nm" title="${esc(a.name)}">${esc(a.name)}</span>
+         <span>${a.runs}</span><span>${a.success_rate}%</span><span>${_secs(a.avg_secs)}</span><span>$${(a.cost||0).toFixed(2)}</span></div>`).join(''))
+    : '<div class="hint">No runs in this window.</div>';
+}
+function setObsDays(d){
+  OBS_DAYS = d;
+  document.querySelectorAll('#obsDays button').forEach(b=>b.classList.toggle('on', Number(b.dataset.d)===d));
+  loadObservability();
+}
+async function reloadActivity(){ OBS_ACTIVITY=[]; OBS_OFFSET=0; OBS_NEXT=null; await fetchActivity(); }
+async function fetchActivity(){
+  let d; try { d = await api('/api/observability/activity?days='+OBS_DAYS+'&limit=100&offset='+OBS_OFFSET); } catch(e){ return; }
+  OBS_ACTIVITY = OBS_ACTIVITY.concat(d.activity||[]); OBS_NEXT = d.next_offset;
+  renderActivity();
+}
+async function loadMoreActivity(){ if (OBS_NEXT==null) return; OBS_OFFSET=OBS_NEXT; await fetchActivity(); }
+function _obsRows(){ const f=$('#obsCat').value; return f ? OBS_ACTIVITY.filter(a=>a.category===f) : OBS_ACTIVITY; }
+function renderActivity(){
+  const rows=_obsRows();
+  $('#obsActivity').innerHTML = rows.length
+    ? rows.map(a => `<div class="act-row">
+        <span class="cat cat-${esc(a.category)}">${esc(a.category)}</span>
+        <span class="act-act">${esc(a.action)}</span>
+        <span class="act-tgt" title="${esc(a.target)}">${esc(a.target)}</span>
+        <span class="act-ag" title="${esc(a.agent_name||'')}">${esc(a.agent_name||('#'+a.agent_id))}</span>
+        <span class="act-ts">${esc((a.ts||'').replace('T',' ').replace('Z',''))}</span></div>`).join('')
+    : '<div class="hint">No activity in this window.</div>';
+  $('#obsMore').style.display = OBS_NEXT!=null ? '' : 'none';
+}
+window.exportActivity = () => {
+  const rows=_obsRows(); const q = s => '"'+String(s==null?'':s).replace(/"/g,'""')+'"';
+  const csv = ['time,agent,category,action,target,run_id'].concat(
+    rows.map(a => [a.ts, a.agent_name||('#'+a.agent_id), a.category, a.action, a.target, a.run_id].map(q).join(','))).join('\n');
+  const url = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  const el=document.createElement('a'); el.href=url; el.download='antonagents-activity.csv'; el.click(); URL.revokeObjectURL(url);
+};
 
 // ---- chat threads ----
 let CHATS = [];
@@ -1353,7 +1490,7 @@ function routeFromPath(){
   const p = location.pathname.replace(/\/+$/,'');
   let m = p.match(/^\/app\/chat\/(\d+)$/);
   if (m) return {view:'chat', chat:Number(m[1])};
-  m = p.match(/^\/app\/(routines|connectors|data|alerts|members)$/);
+  m = p.match(/^\/app\/(routines|connectors|data|alerts|members|observability)$/);
   if (m) return {view:m[1]};
   return {view:'chat'};                       // /app (or anything else) → chat welcome
 }
@@ -2535,6 +2672,7 @@ async function boot(){
     return;
   }
   renderOrgSwitch();
+  $('#navObs').style.display = (ME && ME.role==='admin') ? '' : 'none';   // observability is admin/oversight
   try { BOOT_VERSION = (await api('/api/version')).version; } catch(e){}   // baseline for auto-reload
   health(); loadProviders(); loadSkills();
   loadConnectors(); loadNotifs();          // populate sidebar counts

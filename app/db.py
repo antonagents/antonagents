@@ -948,6 +948,76 @@ async def agent_impact(agent_id: int, baseline_minutes: Optional[int]) -> dict:
             "minutes_saved": r["ok"] * bm, "spend_usd": round(r["spend"], 4)}
 
 
+# ---------- observability: ops health + activity/audit ----------
+
+async def ops_health(org_id: int, since_iso: str) -> dict:
+    """Org-wide run health over a window: status mix, success rate, latency
+    (seconds), cost, recent errors, and a per-agent rollup."""
+    cur = await _db.execute(
+        """SELECT r.status s, count(*) n, coalesce(sum(r.cost_usd),0) cost
+           FROM runs r JOIN agents a ON a.id=r.agent_id
+           WHERE a.org_id=? AND r.created_at >= ? GROUP BY r.status""",
+        (org_id, since_iso))
+    by_status = {r["s"]: {"n": r["n"], "cost": r["cost"]} for r in await cur.fetchall()}
+    total = sum(v["n"] for v in by_status.values())
+    ok = by_status.get("succeeded", {}).get("n", 0)
+    cost = round(sum(v["cost"] for v in by_status.values()), 4)
+    # latency percentiles computed in python (SQLite has no percentile fn)
+    cur = await _db.execute(
+        """SELECT (julianday(r.finished_at)-julianday(r.started_at))*86400 secs
+           FROM runs r JOIN agents a ON a.id=r.agent_id
+           WHERE a.org_id=? AND r.created_at >= ?
+             AND r.started_at IS NOT NULL AND r.finished_at IS NOT NULL""",
+        (org_id, since_iso))
+    durs = sorted(x["secs"] for x in await cur.fetchall() if x["secs"] is not None and x["secs"] >= 0)
+    def _pct(p):
+        if not durs: return 0.0
+        return round(durs[min(len(durs) - 1, int(round((p / 100) * (len(durs) - 1))))], 1)
+    latency = {"avg": round(sum(durs) / len(durs), 1) if durs else 0.0,
+               "p50": _pct(50), "p95": _pct(95), "max": round(durs[-1], 1) if durs else 0.0}
+    cur = await _db.execute(
+        """SELECT r.id, r.agent_id, a.name agent_name, r.status, r.error, r.finished_at
+           FROM runs r JOIN agents a ON a.id=r.agent_id
+           WHERE a.org_id=? AND r.status IN ('failed','interrupted') AND r.created_at >= ?
+           ORDER BY r.id DESC LIMIT 12""", (org_id, since_iso))
+    errors = [{"run_id": r["id"], "agent_id": r["agent_id"], "agent_name": r["agent_name"],
+               "status": r["status"], "error": (r["error"] or "")[:300], "at": r["finished_at"]}
+              for r in await cur.fetchall()]
+    cur = await _db.execute(
+        """SELECT a.id, a.name, count(*) runs,
+                  sum(CASE WHEN r.status='succeeded' THEN 1 ELSE 0 END) ok,
+                  avg((julianday(r.finished_at)-julianday(r.started_at))*86400) avg_secs,
+                  coalesce(sum(r.cost_usd),0) cost
+           FROM runs r JOIN agents a ON a.id=r.agent_id
+           WHERE a.org_id=? AND r.created_at >= ?
+           GROUP BY a.id ORDER BY runs DESC LIMIT 25""", (org_id, since_iso))
+    agents = [{"id": r["id"], "name": r["name"], "runs": r["runs"], "ok": r["ok"] or 0,
+               "success_rate": round(100 * (r["ok"] or 0) / r["runs"]) if r["runs"] else 0,
+               "avg_secs": round(r["avg_secs"], 1) if r["avg_secs"] else 0.0,
+               "cost": round(r["cost"], 4)} for r in await cur.fetchall()]
+    return {"total": total, "succeeded": ok,
+            "failed": by_status.get("failed", {}).get("n", 0),
+            "interrupted": by_status.get("interrupted", {}).get("n", 0),
+            "running": by_status.get("running", {}).get("n", 0) + by_status.get("queued", {}).get("n", 0),
+            "success_rate": round(100 * ok / total) if total else 0,
+            "cost_usd": cost, "latency": latency, "errors": errors, "agents": agents}
+
+
+async def activity(org_id: int, since_iso: str, agent_id: Optional[int] = None,
+                   limit: int = 100, offset: int = 0) -> list[dict]:
+    """Raw tool_use activity across the org's runs, newest first (the audit feed).
+    The caller classifies each row into shell/web/files/app/task."""
+    q = ("SELECT e.id, e.ts, e.run_id, e.data, r.agent_id, a.name agent_name "
+         "FROM events e JOIN runs r ON r.id=e.run_id JOIN agents a ON a.id=r.agent_id "
+         "WHERE a.org_id=? AND e.type='tool_use' AND e.ts >= ?")
+    args: list = [org_id, since_iso]
+    if agent_id is not None:
+        q += " AND r.agent_id=?"; args.append(agent_id)
+    q += " ORDER BY e.id DESC LIMIT ? OFFSET ?"; args += [limit, offset]
+    cur = await _db.execute(q, args)
+    return [dict(r) for r in await cur.fetchall()]
+
+
 async def org_impact(org_id: int) -> dict:
     """Org rollup across all agents: minutes saved, successful runs, spend."""
     cur = await _db.execute(

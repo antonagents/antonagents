@@ -337,6 +337,73 @@ async def require_admin(user: dict = Depends(current_user)) -> dict:
     return user
 
 
+def _iso_days_ago(days: int) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - max(0, days) * 86400))
+
+
+def _classify_activity(row: dict) -> dict:
+    """Turn a raw tool_use event into a governance-readable activity record:
+    category (shell/web/files/app/task/skill) + a human action + its target."""
+    try:
+        d = json.loads(row["data"]) if isinstance(row["data"], str) else (row["data"] or {})
+    except Exception:
+        d = {}
+    name = d.get("name") or "?"
+    inp = d.get("input") if isinstance(d.get("input"), dict) else {}
+    cat, action, target = "other", name, ""
+    if name == "Bash":
+        cmd = inp.get("command") or ""
+        m = re.search(r"SUPERAGENT_DB_(\w+)", cmd)   # our data-source DSNs are injected as env vars
+        if m or re.match(r"^\s*(psql|mysql|mongosh|sqlite3|mongo)\b", cmd):
+            cat, action = "data", "query data source"
+            target = (m.group(1).lower() if m else cmd.split()[0]) if cmd.split() else "db"
+        else:
+            cat, action, target = "shell", "run command", cmd[:160]
+    elif name == "WebSearch":
+        cat, action, target = "web", "search", (inp.get("query") or "")[:160]
+    elif name == "WebFetch":
+        cat, action, target = "web", "fetch", (inp.get("url") or "")[:160]
+    elif name in ("Read", "Write", "Edit"):
+        cat, action, target = "files", name.lower(), (inp.get("file_path") or "")[:160]
+    elif name in ("Agent", "Task"):
+        cat, action, target = "task", "subagent", (inp.get("description") or "")[:120]
+    elif name in ("TaskCreate", "TaskUpdate"):
+        cat, action, target = "task", name, ""
+    elif name == "Skill":
+        cat, action, target = "skill", "use skill", (inp.get("command") or inp.get("skill") or "")[:120]
+    elif name.startswith("mcp__"):
+        cat = "app"
+        segs = name.split("__")            # ['mcp','composio_googledrive','GOOGLEDRIVE_DOWNLOAD_FILE']
+        app, act = "app", name
+        if len(segs) >= 3:
+            prov = segs[1].split("_")
+            app = prov[-1] if prov else segs[1]
+            act = segs[2]
+            if act.upper().startswith(app.upper() + "_"):
+                act = act[len(app) + 1:]   # GOOGLEDRIVE_DOWNLOAD_FILE -> DOWNLOAD_FILE
+        action, target = act, app
+    return {"id": row["id"], "ts": row["ts"], "run_id": row["run_id"],
+            "agent_id": row["agent_id"], "agent_name": row["agent_name"],
+            "category": cat, "action": action, "target": target}
+
+
+@app.get("/api/observability/health")
+async def observability_health(days: int = 30, user: dict = Depends(require_admin)):
+    """Org-wide run health (governance/oversight) — admin only."""
+    return await db.ops_health(_org_id(user), _iso_days_ago(days))
+
+
+@app.get("/api/observability/activity")
+async def observability_activity(days: int = 30, agent_id: int | None = None,
+                                 limit: int = 100, offset: int = 0,
+                                 user: dict = Depends(require_admin)):
+    """Audit feed: what agents did (classified tool activity) — admin only."""
+    cap = min(max(1, limit), 500)
+    rows = await db.activity(_org_id(user), _iso_days_ago(days), agent_id, cap, max(0, offset))
+    return {"activity": [_classify_activity(r) for r in rows],
+            "next_offset": (offset + cap) if len(rows) == cap else None}
+
+
 def _is_operator(user: dict) -> bool:
     """An instance operator may onboard *new teams* (own-org signup links).
     If SUPERAGENT_OPERATORS is set, only those emails qualify; otherwise any org
