@@ -148,14 +148,16 @@
     background:transparent; color:var(--fg-2); border:0; border-radius:var(--r-md);
     padding:7px var(--sp-3); font-family:var(--font-sans); font-size:var(--fs-sm); font-weight:500;
     cursor:pointer; transition:background .12s var(--ease), color .12s var(--ease); }
-  .navitem .ni{ font-family:var(--font-mono); color:var(--muted); width:16px; text-align:center; }
+  .navitem .ni{ display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; flex:none; color:var(--muted); }
+  .navitem .ni svg{ width:18px; height:18px; }
   .navitem:hover{ background:var(--surface-2); color:var(--fg); filter:none; transform:none; }
-  .navitem.on{ background:var(--accent); color:var(--accent-ink); }
-  .navitem.on .ni{ color:var(--accent-ink); }
+  .navitem:hover .ni{ color:var(--fg-2); }
+  .navitem.on{ background:var(--accent-soft); color:var(--fg); font-weight:600; }
+  .navitem.on .ni{ color:var(--accent); }
   .navcount{ margin-left:auto; font-family:var(--font-mono); font-size:10px; min-width:16px;
     text-align:center; padding:1px 6px; border-radius:var(--r-pill); background:var(--surface-2);
     color:var(--muted); }
-  .navitem.on .navcount{ background:rgba(255,255,255,.25); color:#fff; }
+  .navitem.on .navcount{ background:var(--accent); color:var(--accent-ink); }
   #content{ overflow:hidden; min-width:0; }
   .view{ display:none; height:100%; }
   .view.on{ display:block; }
@@ -540,8 +542,8 @@
   #right.welcome .chat-topline{ display:none; }
   #right.welcome #log{ flex:0 0 auto; overflow:visible; margin:0; align-items:center; }
   #right.welcome #reply{ margin:20px auto 0; border-top:none; padding-top:0; width:100%; max-width:720px; }
-  .welcome-greeting{ font-family:var(--font-sans); font-size:1.75rem; font-weight:600; color:var(--fg);
-    text-align:center; letter-spacing:-.015em; text-wrap:balance; padding:0 var(--sp-4); }
+  .welcome-greeting{ font-family:var(--font-sans); font-size:2.15rem; font-weight:600; color:var(--fg);
+    text-align:center; letter-spacing:-.025em; text-wrap:balance; padding:0 var(--sp-4); margin-bottom:6px; }
   .welcome-greeting .wg-mark{ display:inline-block; width:.92em; height:.92em; margin-right:.5em; vertical-align:-.08em;
     background:var(--accent);
     -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect x='3.5' y='3.5' width='41' height='41' rx='10' fill='none' stroke='%23000' stroke-width='3'/%3E%3Cpath d='M19 15 L28 24 L19 33' fill='none' stroke='%23000' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
@@ -907,13 +909,13 @@
 
 <div id="shell">
   <nav id="sidebar">
-    <button class="navitem" data-view="chat" onclick="gotoChat()" title="Chat"><span class="ni">◇</span><span class="nl">Chat</span></button>
-    <button class="navitem" data-view="routines" onclick="showView('routines')" title="Routines"><span class="ni">⟳</span><span class="nl">Routines</span></button>
-    <button class="navitem" data-view="connectors" onclick="showView('connectors')" title="Connectors"><span class="ni">⊕</span><span class="nl">Connectors</span><span class="navcount" id="navConn"></span></button>
-    <button class="navitem" data-view="data" onclick="showView('data')" title="Data sources"><span class="ni">▤</span><span class="nl">Data sources</span></button>
-    <button class="navitem" data-view="alerts" onclick="showView('alerts')" title="Alerts"><span class="ni">◔</span><span class="nl">Alerts</span><span class="navcount" id="navAlerts"></span></button>
-    <button class="navitem" data-view="members" onclick="showView('members')" title="Members"><span class="ni">◍</span><span class="nl">Members</span></button>
-    <button class="navitem" data-view="observability" id="navObs" onclick="showView('observability')" title="Observability" style="display:none"><span class="ni">◎</span><span class="nl">Observability</span></button>
+    <button class="navitem" data-view="chat" onclick="gotoChat()" title="Chat"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span><span class="nl">Chat</span></button>
+    <button class="navitem" data-view="routines" onclick="showView('routines')" title="Routines"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><span class="nl">Routines</span></button>
+    <button class="navitem" data-view="connectors" onclick="showView('connectors')" title="Connectors"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg></span><span class="nl">Connectors</span><span class="navcount" id="navConn"></span></button>
+    <button class="navitem" data-view="data" onclick="showView('data')" title="Data sources"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14a8 3 0 0 0 16 0V5"/><path d="M4 12a8 3 0 0 0 16 0"/></svg></span><span class="nl">Data sources</span></button>
+    <button class="navitem" data-view="alerts" onclick="showView('alerts')" title="Alerts"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span><span class="nl">Alerts</span><span class="navcount" id="navAlerts"></span></button>
+    <button class="navitem" data-view="members" onclick="showView('members')" title="Members"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="nl">Members</span></button>
+    <button class="navitem" data-view="observability" id="navObs" onclick="showView('observability')" title="Observability" style="display:none"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span><span class="nl">Observability</span></button>
     <div id="chatPane">
       <button class="full" onclick="newChat()">+ New chat</button>
       <div id="chatThreads"></div>
