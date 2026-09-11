@@ -120,14 +120,16 @@
   .nr-hero{ background:color-mix(in oklab, var(--accent) 7%, var(--surface));
     border-color:color-mix(in oklab, var(--accent) 30%, transparent); }
   .nr-hero-h{ font-size:var(--fs-md); font-weight:600; letter-spacing:-.01em; margin:var(--sp-2) 0 0; }
-  .nr-manual{ padding:0; }
-  .nr-manual > .nr-manual-sum{ list-style:none; cursor:pointer; padding:var(--sp-4) var(--sp-5);
+  /* inset the body with padding on the details (not per-child margins) so width:100%
+     controls fill the content box exactly instead of overflowing by 2×sp-5 */
+  .nr-manual{ padding:0 var(--sp-5); }
+  .nr-manual > .nr-manual-sum{ list-style:none; cursor:pointer; margin:0 calc(-1 * var(--sp-5)); padding:var(--sp-4) var(--sp-5);
     font-size:var(--fs-sm); font-weight:500; color:var(--fg-2); display:flex; align-items:center; gap:6px; }
   .nr-manual > .nr-manual-sum::-webkit-details-marker{ display:none; }
   .nr-manual > .nr-manual-sum::before{ content:"+"; color:var(--muted); font-weight:600; }
   .nr-manual[open] > .nr-manual-sum::before{ content:"\2212"; }
   .nr-manual[open] > .nr-manual-sum{ border-bottom:1px solid var(--line); }
-  .nr-manual > :not(.nr-manual-sum){ margin-left:var(--sp-5); margin-right:var(--sp-5); }
+  .nr-manual > :not(.nr-manual-sum){ margin-left:0; margin-right:0; }
   .nr-manual > .actions{ margin-bottom:var(--sp-5); }
   /* the form fields set their own display, which overrides the native details
      collapse — hide them explicitly when the section is closed */
@@ -138,7 +140,8 @@
     transition:grid-template-columns .2s var(--ease); }
   /* collapsed = icon rail (60px): active bar + live badges + hover tooltips + history flyout */
   #shell.nav-collapsed{ grid-template-columns:60px 1fr; }
-  #shell.nav-collapsed #sidebar{ padding:10px 0; gap:4px; align-items:center; overflow:visible; }
+  #shell.nav-collapsed #sidebar{ padding:10px 0; gap:4px; align-items:center; overflow:visible;
+    position:relative; z-index:50; }   /* lift the rail's layer so hover tooltips paint over chat content */
   /* icon tiles */
   #shell.nav-collapsed .navitem{ width:38px; height:38px; padding:0; margin:0; justify-content:center;
     border-radius:10px; position:relative; }
