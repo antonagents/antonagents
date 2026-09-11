@@ -250,7 +250,11 @@
     border-radius:var(--r-md); padding:10px 12px; transition:border-color .15s var(--ease), box-shadow .15s var(--ease); }
   input::placeholder,textarea::placeholder{ color:var(--muted); opacity:1; }
   textarea{ resize:vertical; min-height:78px; line-height:1.5; }
-  select{ cursor:pointer; -webkit-appearance:none; -moz-appearance:none; appearance:none; padding-right:34px;
+  /* checkboxes/radios must NOT inherit the text-field box styling */
+  input[type=checkbox],input[type=radio]{ width:auto; padding:0; background:transparent; border:0;
+    border-radius:0; box-shadow:none; accent-color:var(--accent); }
+  select{ cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    -webkit-appearance:none; -moz-appearance:none; appearance:none; padding-right:34px;
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239BA3AD' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     background-repeat:no-repeat; background-position:right 12px center; background-size:16px; }
   input:focus,textarea:focus,select:focus{ outline:none; border-color:var(--accent);
@@ -270,6 +274,8 @@
   button.icon{ background:transparent; border-color:var(--line-strong); color:var(--fg-2);
     padding:7px 10px; font-family:var(--font-sans); font-size:var(--fs-xs); }
   button.icon:hover{ border-color:var(--accent); color:var(--accent); filter:none; }
+  button.icon svg{ display:block; width:18px; height:18px; }
+  .orgbtn .caret svg{ width:12px; height:12px; vertical-align:middle; }
   button:disabled{ opacity:.5; cursor:default; transform:none; filter:none; }
   :focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
 
@@ -672,6 +678,7 @@
     padding:8px 6px; border-bottom:1px solid var(--line); font-size:var(--fs-xs); }
   .act-row .act-tgt{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--font-mono); color:var(--fg-2); }
   .act-row .act-act{ color:var(--fg); font-weight:500; }
+  .act-row .act-x{ color:var(--muted); font-weight:400; font-family:var(--font-mono); font-size:var(--fs-xs); margin-left:4px; }
   .act-row .act-ag{ color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .act-row .act-ts{ color:var(--muted); font-family:var(--font-mono); text-align:right; }
   .cat{ font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.03em;
@@ -923,16 +930,16 @@
 </div>
 
 <header>
-  <button class="icon" id="navToggle" onclick="toggleNav()" title="Toggle menu" aria-label="Toggle menu" style="display:none">☰</button>
+  <button class="icon" id="navToggle" onclick="toggleNav()" title="Toggle menu" aria-label="Toggle menu" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
   <div class="brand"><span class="mark"></span><h1>anton<b>agents</b></h1></div>
   <span class="spacer"></span>
   <div class="orgswitch" id="orgSwitch" style="display:none">
-    <button class="orgbtn" id="orgBtn" onclick="toggleOrgMenu()"><span id="orgName">Workspace</span> <span class="caret">▾</span></button>
+    <button class="orgbtn" id="orgBtn" onclick="toggleOrgMenu()"><span id="orgName">Workspace</span> <span class="caret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
     <div class="orgmenu" id="orgMenu" style="display:none"></div>
   </div>
   <span class="live-status" id="liveStatus" style="display:none"></span>
   <span class="whoami" id="whoami"></span>
-  <button class="icon" id="themeToggle" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle theme">◐</button>
+  <button class="icon" id="themeToggle" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></svg></button>
   <button class="ghost" id="logoutBtn" onclick="doLogout()" style="display:none">Log out</button>
 </header>
 
@@ -1032,9 +1039,9 @@
                 <div class="hint">For databases, use <b>Data sources</b> in the sidebar (encrypted) — don't paste connection strings here.</div>
                 <div class="row">
                   <div><label>Provider</label>
-                    <select id="provider"><option value="">Auto (router picks)</option></select></div>
+                    <select id="provider"><option value="">Auto</option></select></div>
                   <div><label>Model</label>
-                    <select id="model"><option value="">Auto (default)</option></select></div>
+                    <select id="model"><option value="">Auto</option></select></div>
                 </div>
                 <label>Impact baseline — minutes of manual work each run replaces</label>
                 <input id="baseline" type="number" min="0" placeholder="e.g. 30"/>
@@ -1304,7 +1311,7 @@ function health(){ /* provider/health chip removed from the header */ }
 async function loadProviders(){
   PROVIDERS = await api('/api/providers');
   const psel = $('#provider');
-  psel.innerHTML = '<option value="">Auto (router picks)</option>' +
+  psel.innerHTML = '<option value="">Auto</option>' +
     PROVIDERS.map(p => `<option value="${p.name}"${p.configured?'':' disabled'}>${esc(p.label)}${p.configured?'':' — no key'}</option>`).join('');
   psel.onchange = fillModels;
   fillModels();
@@ -1312,7 +1319,7 @@ async function loadProviders(){
 function fillModels(){
   const name = $('#provider').value;
   const msel = $('#model');
-  if (!name){ msel.innerHTML = '<option value="">Auto (default)</option>'; return; }
+  if (!name){ msel.innerHTML = '<option value="">Auto</option>'; return; }
   const p = PROVIDERS.find(x => x.name === name);
   msel.innerHTML = (p ? p.models.map(m => `<option value="${m}"${m===p.default_model?' selected':''}>${esc(m)}</option>`).join('') : '');
 }
@@ -1423,6 +1430,7 @@ function showView(name, opts){
 // ---- observability: ops health + activity audit (admin) ----
 let OBS_DAYS = 30, OBS_ACTIVITY = [], OBS_OFFSET = 0, OBS_NEXT = null;
 const _secs = s => s>=60 ? (s/60).toFixed(1)+'m' : Math.round(s)+'s';
+const _usd = n => '$' + (Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:2});
 async function loadObservability(){ await Promise.all([loadObsHealth(), reloadActivity()]); }
 async function loadObsHealth(){
   let d; try { d = await api('/api/observability/health?days='+OBS_DAYS); } catch(e){ $('#obsCards').innerHTML='<div class="hint err">'+esc(e.detail||'failed to load')+'</div>'; return; }
@@ -1434,10 +1442,11 @@ async function loadObsHealth(){
     card('Latency p50 / p95', _secs(d.latency.p50)+' / '+_secs(d.latency.p95), 'max '+_secs(d.latency.max)) +
     card('Cost', '$'+(d.cost_usd||0).toFixed(2), 'provider-approx');
   $('#obsErrors').innerHTML = d.errors.length
-    ? '<h3 class="obs-h3">Recent failures</h3>' + d.errors.map(e =>
-        `<div class="filerow"><span class="fname" style="flex:none;min-width:130px">${esc(e.agent_name||('#'+e.agent_id))}</span>
+    ? '<h3 class="obs-h3">Open incidents</h3>' + d.errors.map(e =>
+        `<div class="filerow"><span class="fname" style="flex:none;min-width:150px">${esc(e.agent_name||('#'+e.agent_id))}</span>
          <span class="fmeta err" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(e.error||e.status)}</span>
-         <span class="fmeta">#${e.run_id}</span></div>`).join('')
+         ${e.count>1?`<span class="fmeta" style="color:var(--warn)">${e.count} occurrences</span>`:''}
+         <span class="fmeta">last #${e.last_run}</span></div>`).join('')
     : '';
   $('#obsAgentsWrap').innerHTML = d.agents.length
     ? ('<h3 class="obs-h3">By agent</h3><div class="obs-agrow obs-aghead"><span class="ag-nm">Agent</span><span>Runs</span><span>Success</span><span>Avg time</span><span>Cost</span></div>' +
@@ -1459,11 +1468,18 @@ async function fetchActivity(){
 async function loadMoreActivity(){ if (OBS_NEXT==null) return; OBS_OFFSET=OBS_NEXT; await fetchActivity(); }
 function _obsRows(){ const f=$('#obsCat').value; return f ? OBS_ACTIVITY.filter(a=>a.category===f) : OBS_ACTIVITY; }
 function renderActivity(){
-  const rows=_obsRows();
+  const raw=_obsRows();
+  // collapse runs of identical consecutive events (same agent·category·action·target) into one row with a ×N count
+  const rows=[];
+  for(const a of raw){
+    const p=rows[rows.length-1];
+    if(p && p.category===a.category && p.action===a.action && p.target===a.target && p.agent_id===a.agent_id){ p._n=(p._n||1)+1; continue; }
+    rows.push({...a});
+  }
   $('#obsActivity').innerHTML = rows.length
     ? rows.map(a => `<div class="act-row">
         <span class="cat cat-${esc(a.category)}">${esc(a.category)}</span>
-        <span class="act-act">${esc(a.action)}</span>
+        <span class="act-act">${esc(a.action)}${a._n?` <span class="act-x">×${a._n}</span>`:''}</span>
         <span class="act-tgt" title="${esc(a.target)}">${esc(a.target)}</span>
         <span class="act-ag" title="${esc(a.agent_name||'')}">${esc(a.agent_name||('#'+a.agent_id))}</span>
         <span class="act-ts">${esc((a.ts||'').replace('T',' ').replace('Z',''))}</span></div>`).join('')
@@ -1856,7 +1872,7 @@ async function openTask(id){
       <div class="prompt-echo">${esc(t.prompt)}</div>
       <div class="m">tools · connectors: ${(t.connectors||[]).join(', ')||'—'} · skills: ${(t.skills||[]).map(s=>esc(s.name)).join(', ')||'—'} · db: ${(t.db_connections||[]).map(d=>esc(d.name)).join(', ')||'—'}</div>
       <div class="m">routine · ${sched}${nextRun} · ${toggle}<a href="#" onclick="editRoutine(${id});return false">edit</a></div>
-      <div class="m">impact · ${t.impact?t.impact.runs_succeeded:0}/${t.impact?t.impact.runs:0} done · ${t.impact?t.impact.minutes_saved:0} min saved · $${t.impact?t.impact.cost_saved_usd:0} value · $${t.impact?t.impact.spend_usd:0} spent</div>
+      <div class="m">impact · ${t.impact?t.impact.runs_succeeded:0}/${t.impact?t.impact.runs:0} done · ${t.impact?t.impact.minutes_saved:0} min saved · ${_usd(t.impact?t.impact.cost_saved_usd:0)} value · ${_usd(t.impact?t.impact.spend_usd:0)} spent</div>
       <div class="m">alerts · ${(t.alerts||[]).filter(a=>a.enabled).map(a=>esc(alertLabel(a))).join(', ')||'none'} · <a href="#" onclick="editAlerts(${id});return false">edit</a></div>
       <div class="m">runs · ${runs.map(r=>`<a href="#" onclick="watchRunId(${r.id});return false">#${r.id} ${r.status}</a>`).join('  ')||'none'}</div>
     </details>
@@ -2351,8 +2367,8 @@ async function loadImpact(){
   const hrs = (d.minutes_saved/60).toFixed(1);
   $('#impact').innerHTML =
     `<b>${d.runs_succeeded}</b> runs completed · <b>${hrs}h</b> saved · `
-    + `<b>$${d.cost_saved_usd.toLocaleString()}</b> value delivered · `
-    + `$${d.spend_usd} spent · ${d.agents} agent${d.agents===1?'':'s'}`;
+    + `<b>${_usd(d.cost_saved_usd)}</b> value delivered · `
+    + `${_usd(d.spend_usd)} spent · ${d.agents} agent${d.agents===1?'':'s'}`;
 }
 
 let CONN = { enabled:false, list:[] };

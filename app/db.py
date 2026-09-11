@@ -975,13 +975,16 @@ async def ops_health(org_id: int, since_iso: str) -> dict:
         return round(durs[min(len(durs) - 1, int(round((p / 100) * (len(durs) - 1))))], 1)
     latency = {"avg": round(sum(durs) / len(durs), 1) if durs else 0.0,
                "p50": _pct(50), "p95": _pct(95), "max": round(durs[-1], 1) if durs else 0.0}
+    # group identical failures into incidents (same agent + same error) with a count
     cur = await _db.execute(
-        """SELECT r.id, r.agent_id, a.name agent_name, r.status, r.error, r.finished_at
+        """SELECT r.agent_id, a.name agent_name, r.error, r.status,
+                  count(*) n, max(r.id) last_run, max(r.finished_at) last_at
            FROM runs r JOIN agents a ON a.id=r.agent_id
            WHERE a.org_id=? AND r.status IN ('failed','interrupted') AND r.created_at >= ?
-           ORDER BY r.id DESC LIMIT 12""", (org_id, since_iso))
-    errors = [{"run_id": r["id"], "agent_id": r["agent_id"], "agent_name": r["agent_name"],
-               "status": r["status"], "error": (r["error"] or "")[:300], "at": r["finished_at"]}
+           GROUP BY r.agent_id, r.error ORDER BY last_run DESC LIMIT 12""", (org_id, since_iso))
+    errors = [{"agent_id": r["agent_id"], "agent_name": r["agent_name"],
+               "status": r["status"], "error": (r["error"] or r["status"] or "")[:300],
+               "count": r["n"], "last_run": r["last_run"], "at": r["last_at"]}
               for r in await cur.fetchall()]
     cur = await _db.execute(
         """SELECT a.id, a.name, count(*) runs,
