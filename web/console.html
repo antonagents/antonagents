@@ -111,7 +111,6 @@
   .status-chip.on .dot{ background:var(--ok); box-shadow:0 0 0 3px var(--ok-soft); }
   .status-chip.off .dot{ background:var(--err); box-shadow:0 0 0 3px var(--err-soft); }
   .spacer{ flex:1; }
-  .whoami{ font-family:var(--font-sans); font-size:var(--fs-xs); color:var(--muted); }
 
   /* ---- layout ---- */
   .col{ overflow-y:auto; padding:var(--sp-5); display:flex; flex-direction:column; gap:var(--sp-5); }
@@ -160,6 +159,37 @@
     text-align:center; padding:1px 6px; border-radius:var(--r-pill); background:var(--surface-2);
     color:var(--muted); }
   .navitem.on .navcount{ background:var(--accent); color:var(--accent-ink); }
+  /* account block — pinned to the bottom-left of the sidebar (workspace · role · avatar) */
+  .acct{ margin-top:auto; flex:none; display:flex; align-items:center; gap:10px; width:100%;
+    padding:9px 10px; background:transparent; border:0; border-top:1px solid var(--line);
+    border-radius:0; cursor:pointer; text-align:left; color:var(--fg);
+    transition:background .12s var(--ease); }
+  .acct:hover{ background:var(--surface-2); filter:none; transform:none; }
+  .acct-av{ flex:none; width:28px; height:28px; border-radius:999px; background:var(--surface-2);
+    border:1px solid var(--line-strong); color:var(--fg); display:flex; align-items:center;
+    justify-content:center; font-size:11px; font-weight:600; font-family:var(--font-sans); }
+  .acct-id{ min-width:0; display:flex; flex-direction:column; line-height:1.25; }
+  .acct-name{ font-size:var(--fs-sm); font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .acct-role{ font-size:11px; color:var(--muted); }
+  .acct-caret{ margin-left:auto; color:var(--muted); display:inline-flex; flex:none; }
+  .acct-caret svg{ width:14px; height:14px; }
+  #shell.nav-collapsed .acct{ justify-content:center; padding:9px 0; border-top:0; }
+  #shell.nav-collapsed .acct-id,#shell.nav-collapsed .acct-caret{ display:none; }
+  .acct-menu{ position:fixed; left:10px; bottom:56px; width:236px; z-index:200;
+    background:var(--surface); border:1px solid var(--line-strong); border-radius:var(--r-md);
+    box-shadow:0 14px 34px rgba(0,0,0,.42); padding:6px; }
+  .acct-menu .am-email{ padding:7px 10px 8px; font-size:var(--fs-xs); color:var(--muted);
+    font-family:var(--font-mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    border-bottom:1px solid var(--line); margin-bottom:4px; }
+  .acct-menu .am-sec{ padding:6px 10px 3px; font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+  .acct-menu .am-div{ height:1px; background:var(--line); margin:4px 0; }
+  .acct-menu .ami{ display:flex; align-items:center; gap:9px; width:100%; padding:8px 10px; border:0;
+    background:transparent; border-radius:var(--r-sm); font-family:var(--font-sans); font-size:var(--fs-sm);
+    color:var(--fg); cursor:pointer; text-align:left; }
+  .acct-menu .ami:hover{ background:var(--surface-2); filter:none; transform:none; }
+  .acct-menu .ami.on{ background:var(--surface-2); font-weight:600; }
+  .acct-menu .ami svg{ width:16px; height:16px; flex:none; color:var(--fg-2); }
+  .acct-menu .amrole{ margin-left:auto; font-size:var(--fs-xs); color:var(--muted); }
   #content{ overflow:hidden; min-width:0; }
   .view{ display:none; height:100%; }
   .view.on{ display:block; }
@@ -275,7 +305,6 @@
     padding:7px 10px; font-family:var(--font-sans); font-size:var(--fs-xs); }
   button.icon:hover{ border-color:var(--accent); color:var(--accent); filter:none; }
   button.icon svg{ display:block; width:18px; height:18px; }
-  .orgbtn .caret svg{ width:12px; height:12px; vertical-align:middle; }
   button:disabled{ opacity:.5; cursor:default; transform:none; filter:none; }
   :focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
 
@@ -319,21 +348,6 @@
   .filerow .factions a{ font-family:var(--font-mono); font-size:var(--fs-xs); color:var(--accent); text-decoration:none;
     padding:4px 9px; border:1px solid var(--line); border-radius:6px; }
   .filerow .factions a:hover{ background:var(--surface-2); }
-  /* ---- org switcher ---- */
-  .orgswitch{ position:relative; }
-  .orgbtn{ display:flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid var(--line);
-    border-radius:var(--r-md); background:var(--surface); color:var(--fg); cursor:pointer; font-size:var(--fs-sm); }
-  .orgbtn:hover{ background:var(--surface-2); }
-  .orgbtn .caret{ color:var(--muted); font-size:10px; }
-  .orgmenu{ position:absolute; top:calc(100% + 6px); right:0; min-width:230px; z-index:80;
-    background:var(--surface); border:1px solid var(--line); border-radius:var(--r-md);
-    box-shadow:0 10px 30px rgba(0,0,0,.18); padding:6px; }
-  .orgitem{ display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%;
-    padding:8px 10px; border:none; background:none; color:var(--fg); cursor:pointer;
-    border-radius:6px; font-size:var(--fs-sm); text-align:left; }
-  .orgitem:hover{ background:var(--surface-2); }
-  .orgitem.on{ background:var(--surface-2); font-weight:600; }
-  .orgitem .orgrole{ font-family:var(--font-sans); font-size:var(--fs-xs); color:var(--muted); }
   /* ---- members ---- */
   .inviteform{ display:flex; gap:8px; align-items:center; max-width:620px; }
   .inviteform input{ flex:1 1 auto; min-width:0; width:auto; }
@@ -933,14 +947,7 @@
   <button class="icon" id="navToggle" onclick="toggleNav()" title="Toggle menu" aria-label="Toggle menu" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
   <div class="brand"><span class="mark"></span><h1>anton<b>agents</b></h1></div>
   <span class="spacer"></span>
-  <div class="orgswitch" id="orgSwitch" style="display:none">
-    <button class="orgbtn" id="orgBtn" onclick="toggleOrgMenu()"><span id="orgName">Workspace</span> <span class="caret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span></button>
-    <div class="orgmenu" id="orgMenu" style="display:none"></div>
-  </div>
   <span class="live-status" id="liveStatus" style="display:none"></span>
-  <span class="whoami" id="whoami"></span>
-  <button class="icon" id="themeToggle" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></svg></button>
-  <button class="ghost" id="logoutBtn" onclick="doLogout()" style="display:none">Log out</button>
 </header>
 
 <div id="shell">
@@ -956,6 +963,15 @@
       <button class="full" onclick="newChat()">+ New chat</button>
       <div id="chatThreads"></div>
     </div>
+    <button class="acct" id="acctBtn" onclick="toggleAcctMenu(event)" title="Account" style="display:none">
+      <span class="acct-av" id="acctAv">–</span>
+      <span class="acct-id">
+        <span class="acct-name" id="acctName">Workspace</span>
+        <span class="acct-role" id="acctRole">member</span>
+      </span>
+      <span class="acct-caret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></span>
+    </button>
+    <div class="acct-menu" id="acctMenu" style="display:none"></div>
   </nav>
 
   <div id="content">
@@ -1267,8 +1283,7 @@ function setMode(m){
 async function showLogin(){
   $('#login').style.display = 'flex';
   $('#shell').style.display = 'none';
-  $('#logoutBtn').style.display = 'none';
-  $('#whoami').textContent = '';
+  { const a=$('#acctBtn'); if (a) a.style.display='none'; const m=$('#acctMenu'); if (m) m.style.display='none'; }
   try {
     const cfg = await fetch('/api/auth/config').then(r=>r.json());
     $('#googleWrap').style.display = cfg.google_enabled ? '' : 'none';
@@ -2587,26 +2602,52 @@ let POLL = null;
 // ---------------- teams: org switcher + members ----------------
 let ME = null;
 
-function renderOrgSwitch(){
-  const el = $('#orgSwitch'); if (!el || !ME) return;
+function _initials(s){
+  s=(s||'').trim(); if(!s) return '–';
+  const p=s.split(/[\s._-]+/).filter(Boolean);
+  return (p.length>=2 ? p[0][0]+p[1][0] : s.slice(0,2)).toUpperCase();
+}
+// account block, pinned to the bottom-left of the sidebar: workspace name + role + avatar
+function renderAccount(){
+  if (!ME) return;
   const orgs = ME.orgs || [];
   const active = orgs.find(o => o.id === ME.active_org_id);
-  $('#orgName').textContent = active ? active.name : 'Workspace';
-  el.style.display = orgs.length > 1 ? '' : 'none';   // only surface with 2+ orgs
-  $('#orgMenu').innerHTML = orgs.map(o =>
-    `<button class="orgitem ${o.id===ME.active_org_id?'on':''}" onclick="switchOrg(${o.id})">`
-    + `${esc(o.name)}<span class="orgrole">${esc(o.role)}</span></button>`).join('');
+  const wsName = active ? active.name : (ME.name || 'Workspace');
+  const role = (active && active.role) || ME.role || 'member';
+  $('#acctName').textContent = wsName; $('#acctName').title = wsName;
+  $('#acctRole').textContent = role.charAt(0).toUpperCase()+role.slice(1);
+  $('#acctAv').textContent = _initials(ME.name || (ME.email||'').split('@')[0] || wsName);
+  $('#acctBtn').style.display = '';
 }
-window.toggleOrgMenu = () => { const m=$('#orgMenu'); m.style.display = m.style.display==='none'?'':'none'; };
+// clicking the account block opens the menu that used to be the top-bar "junk drawer"
+window.toggleAcctMenu = (e) => {
+  if (e) e.stopPropagation();
+  const m = $('#acctMenu');
+  if (m.style.display !== 'none'){ m.style.display='none'; return; }
+  const orgs = (ME && ME.orgs) || [];
+  const themeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></svg>';
+  const outIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>';
+  let html = '';
+  if (ME && ME.email) html += `<div class="am-email" title="${esc(ME.email)}">${esc(ME.email)}</div>`;
+  if (orgs.length > 1){
+    html += '<div class="am-sec">Switch workspace</div>';
+    html += orgs.map(o => `<button class="ami ${o.id===ME.active_org_id?'on':''}" onclick="switchOrg(${o.id})">${esc(o.name)}<span class="amrole">${esc(o.role)}</span></button>`).join('');
+    html += '<div class="am-div"></div>';
+  }
+  html += `<button class="ami" onclick="toggleTheme()">${themeIcon}<span>Toggle theme</span></button>`;
+  html += `<button class="ami" onclick="doLogout()">${outIcon}<span>Log out</span></button>`;
+  m.innerHTML = html;
+  m.style.display = '';
+};
 window.switchOrg = async (id) => {
-  $('#orgMenu').style.display='none';
+  const m=$('#acctMenu'); if (m) m.style.display='none';
   if (!ME || id === ME.active_org_id) return;
   try { await api('/api/org/switch',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({org_id:id})}); }
   catch(e){ toast(e.detail||e.message||'error','err'); return; }
   location.href = '/app';   // clean reload into the new org's context
 };
-document.addEventListener('click', e => {   // close the org menu on outside click
-  if (!e.target.closest('#orgSwitch')) { const m=$('#orgMenu'); if (m) m.style.display='none'; }
+document.addEventListener('click', e => {   // close the account menu on outside click
+  if (!e.target.closest('#acctBtn') && !e.target.closest('#acctMenu')){ const m=$('#acctMenu'); if (m) m.style.display='none'; }
 });
 
 async function loadMembers(){
@@ -2748,10 +2789,8 @@ async function boot(){
   catch(e){ return showLogin(); }
   $('#login').style.display='none';
   $('#shell').style.display='';
-  $('#logoutBtn').style.display='';
   $('#navToggle').style.display='';
   try { if (localStorage.getItem('sa-nav')==='closed') $('#shell').classList.add('nav-collapsed'); } catch(e){}
-  $('#whoami').textContent = user.email;
   ME = user;
   // arriving from an invite link that routed through login: accept, then reload
   const invTok = new URLSearchParams(location.search).get('invite');
@@ -2762,7 +2801,7 @@ async function boot(){
     location.href = '/app';
     return;
   }
-  renderOrgSwitch();
+  renderAccount();
   $('#navObs').style.display = (ME && ME.role==='admin') ? '' : 'none';   // observability is admin/oversight
   try { BOOT_VERSION = (await api('/api/version')).version; } catch(e){}   // baseline for auto-reload
   health(); loadProviders(); loadSkills();
