@@ -86,6 +86,8 @@
     -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
   }
   .mono{ font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
+  .impact-strip{ font-family:var(--font-sans); font-size:var(--fs-sm); color:var(--fg-2);
+    font-variant-numeric:tabular-nums; line-height:1.6; }
   .eyebrow{ font-family:var(--font-mono); font-size:var(--fs-xs); letter-spacing:.14em;
     text-transform:uppercase; color:var(--muted); margin:0 0 var(--sp-3); font-weight:500; }
 
@@ -109,7 +111,7 @@
   .status-chip.on .dot{ background:var(--ok); box-shadow:0 0 0 3px var(--ok-soft); }
   .status-chip.off .dot{ background:var(--err); box-shadow:0 0 0 3px var(--err-soft); }
   .spacer{ flex:1; }
-  .whoami{ font-family:var(--font-mono); font-size:var(--fs-xs); color:var(--muted); }
+  .whoami{ font-family:var(--font-sans); font-size:var(--fs-xs); color:var(--muted); }
 
   /* ---- layout ---- */
   .col{ overflow-y:auto; padding:var(--sp-5); display:flex; flex-direction:column; gap:var(--sp-5); }
@@ -154,7 +156,7 @@
   .navitem:hover .ni{ color:var(--fg-2); }
   .navitem.on{ background:var(--accent-soft); color:var(--fg); font-weight:600; }
   .navitem.on .ni{ color:var(--accent); }
-  .navcount{ margin-left:auto; font-family:var(--font-mono); font-size:10px; min-width:16px;
+  .navcount{ margin-left:auto; font-family:var(--font-sans); font-variant-numeric:tabular-nums; font-size:10px; min-width:16px;
     text-align:center; padding:1px 6px; border-radius:var(--r-pill); background:var(--surface-2);
     color:var(--muted); }
   .navitem.on .navcount{ background:var(--accent); color:var(--accent-ink); }
@@ -166,7 +168,7 @@
   .page{ height:100%; overflow-y:auto; padding:var(--sp-6) var(--sp-6); max-width:1320px; margin:0 auto; }
   .page-head{ display:flex; align-items:center; gap:var(--sp-3); margin-bottom:var(--sp-2); }
   .page-head h2{ font-family:var(--font-sans); font-size:var(--fs-lg); font-weight:600; letter-spacing:-.01em; margin:0; }
-  .page-head .count{ font-family:var(--font-mono); font-size:var(--fs-xs); color:var(--muted); }
+  .page-head .count{ font-family:var(--font-sans); font-size:var(--fs-xs); color:var(--muted); }
   .page-sub{ color:var(--muted); font-size:var(--fs-sm); margin:0 0 var(--sp-5); max-width:70ch; line-height:1.5; }
 
   /* chat threads live inside the single left sidebar (below the nav) —
@@ -248,7 +250,9 @@
     border-radius:var(--r-md); padding:10px 12px; transition:border-color .15s var(--ease), box-shadow .15s var(--ease); }
   input::placeholder,textarea::placeholder{ color:var(--muted); opacity:1; }
   textarea{ resize:vertical; min-height:78px; line-height:1.5; }
-  select{ cursor:pointer; }
+  select{ cursor:pointer; -webkit-appearance:none; -moz-appearance:none; appearance:none; padding-right:34px;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239BA3AD' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:right 12px center; background-size:16px; }
   input:focus,textarea:focus,select:focus{ outline:none; border-color:var(--accent);
     box-shadow:0 0 0 3px var(--accent-soft); }
   .row{ display:flex; gap:var(--sp-3); }
@@ -298,7 +302,7 @@
     box-shadow:0 2px 6px oklch(0 0 0 / .3), 0 30px 70px -24px oklch(0 0 0 / .6); overflow:hidden; }
   .modal-head{ display:flex; align-items:center; gap:var(--sp-3); padding:var(--sp-4) var(--sp-5); border-bottom:1px solid var(--line); }
   .modal-head h2{ font-family:var(--font-sans); font-size:var(--fs-md); font-weight:600; letter-spacing:-.01em; margin:0; }
-  .modal-head .count{ font-family:var(--font-mono); font-size:var(--fs-xs); color:var(--muted); }
+  .modal-head .count{ font-family:var(--font-sans); font-size:var(--fs-xs); color:var(--muted); }
   .modal-body{ padding:var(--sp-4) var(--sp-5) var(--sp-5); overflow-y:auto; }
   .modal-search{ margin-bottom:var(--sp-4); }
   /* ---- files / artifacts list ---- */
@@ -413,7 +417,7 @@
 
   /* ---- status badges (semantic, distinct from accent) ---- */
   .badge{ display:inline-flex; align-items:center; gap:6px; flex:none;
-    font-family:var(--font-mono); font-size:var(--fs-xs); letter-spacing:.03em;
+    font-family:var(--font-sans); font-size:var(--fs-xs); letter-spacing:.02em; font-weight:600;
     padding:3px 9px 3px 8px; border-radius:var(--r-pill); border:1px solid var(--line);
     color:var(--muted); background:var(--surface); }
   .badge::before{ content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
@@ -436,7 +440,7 @@
   .notif{ padding:var(--sp-2) 0; border-bottom:1px solid var(--line); }
   .notif.unread{ border-left:2px solid var(--accent); padding-left:var(--sp-2); margin-left:-2px; }
   .notif .nt{ font-size:var(--fs-sm); color:var(--fg); }
-  .notif .nb{ font-family:var(--font-mono); font-size:var(--fs-xs); color:var(--muted);
+  .notif .nb{ font-family:var(--font-sans); font-size:var(--fs-xs); color:var(--muted);
     white-space:pre-wrap; margin-top:2px; }
   .notif .nmeta{ font-family:var(--font-sans); font-size:10px; color:var(--muted); margin-top:2px; }
   .alertline{ display:flex; gap:8px; align-items:center; margin-top:4px; }
@@ -963,7 +967,7 @@
         <div class="routines-left col">
           <div class="panel" id="impactPanel" style="display:none">
             <p class="eyebrow">Impact</p>
-            <div id="impact" class="mono"></div>
+            <div id="impact" class="impact-strip"></div>
           </div>
           <div class="panel" id="templatePanel" style="display:none">
             <p class="eyebrow">Start from a template</p>
