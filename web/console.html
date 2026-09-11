@@ -548,7 +548,8 @@
     background:var(--accent);
     -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect x='3.5' y='3.5' width='41' height='41' rx='10' fill='none' stroke='%23000' stroke-width='3'/%3E%3Cpath d='M19 15 L28 24 L19 33' fill='none' stroke='%23000' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
             mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect x='3.5' y='3.5' width='41' height='41' rx='10' fill='none' stroke='%23000' stroke-width='3'/%3E%3Cpath d='M19 15 L28 24 L19 33' fill='none' stroke='%23000' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat; }
-  #right.welcome .composer textarea{ min-height:58px; }
+  #right.welcome .composer{ align-items:center; padding:12px 12px 12px 14px; }
+  #right.welcome .composer textarea{ min-height:30px; }
   .welcome-chips{ display:none; }
   #right.welcome .welcome-chips{ display:flex; flex-wrap:wrap; gap:var(--sp-2); justify-content:center;
     margin:var(--sp-4) auto 0; max-width:720px; }
@@ -566,8 +567,9 @@
     background:none; border:none; border-radius:0; resize:none; }
   .composer textarea:focus{ border:none; box-shadow:none; }   /* the card owns the focus ring */
   .composer button{ flex:none; align-self:flex-end; border-radius:12px; padding:9px 18px; }
-  .attach-btn{ background:none; border:none; color:var(--fg-2); cursor:pointer; font-size:18px;
-    line-height:1; padding:7px; border-radius:8px; }
+  .attach-btn{ background:none; border:none; color:var(--fg-2); cursor:pointer;
+    line-height:1; padding:7px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; }
+  .attach-btn svg{ width:18px; height:18px; }
   .attach-btn:hover{ color:var(--fg); background:var(--surface-2); }
   .upload-chips{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
   .upload-chips:empty{ display:none; }
@@ -941,7 +943,7 @@
           <div id="reply">
             <div id="uploadChips" class="upload-chips"></div>
             <div class="composer">
-              <button id="attachBtn" class="attach-btn" title="Attach a file" aria-label="Attach a file" onclick="document.getElementById('fileInput').click()">&#128206;</button>
+              <button id="attachBtn" class="attach-btn" title="Attach a file" aria-label="Attach a file" onclick="document.getElementById('fileInput').click()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
               <input id="fileInput" type="file" multiple style="display:none" onchange="onFilesPicked(this.files); this.value=''"/>
               <textarea id="replyprompt" rows="1" placeholder="Ask anything, or give your agent a task — it can use your tools, data &amp; the web"></textarea>
               <button id="replybtn" onclick="sendReply()">Send</button>
@@ -1043,7 +1045,7 @@
           <div id="rreply" style="display:none">
             <div id="ruploadChips" class="upload-chips"></div>
             <div class="composer">
-              <button class="attach-btn" title="Attach a file" aria-label="Attach a file" onclick="document.getElementById('rfileInput').click()">&#128206;</button>
+              <button class="attach-btn" title="Attach a file" aria-label="Attach a file" onclick="document.getElementById('rfileInput').click()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
               <input id="rfileInput" type="file" multiple style="display:none" onchange="onFilesPicked(this.files); this.value=''"/>
               <textarea id="rreplyprompt" rows="1" placeholder="Ask this agent something, or tell it to run now…"></textarea>
               <button id="rreplybtn" onclick="sendRoutineMsg()">Send</button>
