@@ -387,6 +387,13 @@ def _classify_activity(row: dict) -> dict:
             "category": cat, "action": action, "target": target}
 
 
+@app.get("/api/live")
+async def live_status(user: dict = Depends(current_user)):
+    """Live status for the console chrome: in-flight runs + currently-broken
+    routines. Polled to 'show the machine working'."""
+    return await db.live_status(_org_id(user))
+
+
 @app.get("/api/observability/health")
 async def observability_health(days: int = 30, user: dict = Depends(require_admin)):
     """Org-wide run health (governance/oversight) — admin only."""

@@ -1003,6 +1003,30 @@ async def ops_health(org_id: int, since_iso: str) -> dict:
             "cost_usd": cost, "latency": latency, "errors": errors, "agents": agents}
 
 
+async def live_status(org_id: int) -> dict:
+    """Live 'is the machine working' signal for the org: in-flight runs (with the
+    agent name + start time so the UI can show elapsed) and routines whose most
+    recent run failed (currently broken). No cost — that number isn't accurate yet."""
+    cur = await _db.execute(
+        """SELECT r.id run_id, r.agent_id, a.name, r.started_at, r.status
+           FROM runs r JOIN agents a ON a.id=r.agent_id
+           WHERE a.org_id=? AND r.status IN ('running','queued')
+           ORDER BY r.started_at""", (org_id,))
+    running = [{"run_id": x["run_id"], "agent_id": x["agent_id"], "name": x["name"],
+                "started_at": x["started_at"], "status": x["status"]} for x in await cur.fetchall()]
+    # routines whose LATEST run failed/interrupted = currently broken
+    cur = await _db.execute(
+        """SELECT a.id agent_id, a.name, r.id run_id, r.error, r.status, r.finished_at
+           FROM agents a JOIN runs r
+             ON r.id = (SELECT id FROM runs WHERE agent_id=a.id ORDER BY id DESC LIMIT 1)
+           WHERE a.org_id=? AND a.kind='routine' AND r.status IN ('failed','interrupted')
+           ORDER BY r.id DESC LIMIT 6""", (org_id,))
+    broken = [{"run_id": x["run_id"], "agent_id": x["agent_id"], "name": x["name"],
+               "error": (x["error"] or x["status"] or "")[:120], "at": x["finished_at"]}
+              for x in await cur.fetchall()]
+    return {"running": running, "running_count": len(running), "broken": broken}
+
+
 async def activity(org_id: int, since_iso: str, agent_id: Optional[int] = None,
                    limit: int = 100, offset: int = 0) -> list[dict]:
     """Raw tool_use activity across the org's runs, newest first (the audit feed).

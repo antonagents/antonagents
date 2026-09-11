@@ -691,6 +691,26 @@
     .obs-agrow{ grid-template-columns:2fr 1fr 1fr; } .obs-agrow span:nth-child(4),.obs-agrow span:nth-child(5){ display:none; }
   }
 
+  /* ---- liveness: show the machine working ---- */
+  .live-status{ display:inline-flex; align-items:center; gap:7px; font-size:var(--fs-xs); color:var(--fg-2);
+    padding:5px 11px; border:1px solid var(--line-strong); border-radius:var(--r-pill);
+    background:var(--surface-2); font-weight:500; font-variant-numeric:tabular-nums; }
+  .live-status.err{ color:var(--err); border-color:var(--err-soft); }
+  .lpdot{ width:7px; height:7px; border-radius:50%; flex:none; background:var(--ok);
+    box-shadow:0 0 0 3px var(--ok-soft); animation:pulse 1.4s var(--ease) infinite; }
+  .lpdot.err{ background:var(--err); box-shadow:0 0 0 3px var(--err-soft); animation:none; }
+  .navcount.live{ background:var(--ok); color:#04120b; }
+  .welcome-live{ display:none; max-width:720px; margin:22px auto 0; width:100%; text-align:left; }
+  .welcome-live .live-head{ font-family:var(--font-sans); font-size:var(--fs-xs); text-transform:uppercase;
+    letter-spacing:.08em; color:var(--muted); margin-bottom:10px; }
+  .live-row{ display:flex; align-items:center; gap:var(--sp-3); padding:11px 13px; border:1px solid var(--line);
+    border-radius:var(--r-md); background:var(--surface); margin-bottom:8px; font-size:var(--fs-sm); }
+  .live-row .lr-nm{ font-weight:600; color:var(--fg); flex:none; max-width:45%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .live-row .lr-meta{ color:var(--muted); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .live-row .lr-meta.err{ color:var(--err); }
+  .live-row .lr-act{ color:var(--accent); text-decoration:none; font-size:var(--fs-xs); font-weight:500; flex:none; }
+  .live-row .lr-act:hover{ text-decoration:underline; }
+
   /* --- accessibility: honor reduced-transparency & increased-contrast (Apple #14) --- */
   @media (prefers-reduced-transparency:reduce){
     :root{ --glass:var(--surface); --glass-strong:var(--surface); --blur:none; }
@@ -910,6 +930,7 @@
     <button class="orgbtn" id="orgBtn" onclick="toggleOrgMenu()"><span id="orgName">Workspace</span> <span class="caret">▾</span></button>
     <div class="orgmenu" id="orgMenu" style="display:none"></div>
   </div>
+  <span class="live-status" id="liveStatus" style="display:none"></span>
   <span class="whoami" id="whoami"></span>
   <button class="icon" id="themeToggle" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle theme">◐</button>
   <button class="ghost" id="logoutBtn" onclick="doLogout()" style="display:none">Log out</button>
@@ -918,7 +939,7 @@
 <div id="shell">
   <nav id="sidebar">
     <button class="navitem" data-view="chat" onclick="gotoChat()" title="Chat"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span><span class="nl">Chat</span></button>
-    <button class="navitem" data-view="routines" onclick="showView('routines')" title="Routines"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><span class="nl">Routines</span></button>
+    <button class="navitem" data-view="routines" onclick="showView('routines')" title="Routines"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><span class="nl">Routines</span><span class="navcount live" id="navRoutines" style="display:none"></span></button>
     <button class="navitem" data-view="connectors" onclick="showView('connectors')" title="Connectors"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg></span><span class="nl">Connectors</span><span class="navcount" id="navConn"></span></button>
     <button class="navitem" data-view="data" onclick="showView('data')" title="Data sources"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14a8 3 0 0 0 16 0V5"/><path d="M4 12a8 3 0 0 0 16 0"/></svg></span><span class="nl">Data sources</span></button>
     <button class="navitem" data-view="alerts" onclick="showView('alerts')" title="Alerts"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span><span class="nl">Alerts</span><span class="navcount" id="navAlerts"></span></button>
@@ -957,6 +978,7 @@
             <span class="hint" id="replymsg"></span>
           </div>
           <div id="welcomeChips" class="welcome-chips"></div>
+          <div id="welcomeLive" class="welcome-live"></div>
         </div>
       </div>
     </section>
@@ -1482,6 +1504,7 @@ function showWelcome(replace){
   showComposer(); setComposerBusy(false);
   renderThreads();
   if (replace) history.replaceState({}, '', '/app'); else history.pushState({}, '', '/app');
+  loadLive();   // surface running / broken routines on the home screen
   const ta = $('#replyprompt'); if (ta){ ta.value=''; setTimeout(() => ta.focus(), 60); }
 }
 const WELCOME_CHIPS = [
@@ -2661,6 +2684,48 @@ window.leaveOrg = async (uid) => { if(!await confirmDialog('Leave this workspace
   try{ await api('/api/org/members/'+uid,{method:'DELETE'}); location.href='/app'; }
   catch(e){ toast(e.detail||e.message||'error','err'); } };
 
+// ---- liveness: show the machine working ----
+let LIVE = {running:[],broken:[],running_count:0};
+async function loadLive(){
+  let d; try{ d = await api('/api/live'); }catch(e){ return; }
+  LIVE = d;
+  const ls = $('#liveStatus');
+  if (ls){
+    ls.classList.remove('err');
+    if (d.running_count>0){ ls.style.display=''; ls.innerHTML = '<span class="lpdot"></span>'+d.running_count+' running'; }
+    else if (d.broken && d.broken.length){ ls.style.display=''; ls.classList.add('err');
+      ls.innerHTML = '<span class="lpdot err"></span>'+d.broken.length+' need'+(d.broken.length===1?'s':'')+' attention'; }
+    else { ls.style.display='none'; }
+  }
+  const nr = $('#navRoutines');
+  if (nr){ if (d.running_count>0){ nr.textContent=d.running_count; nr.style.display=''; } else { nr.style.display='none'; } }
+  renderWelcomeLive();
+}
+function _elapsed(iso){
+  if(!iso) return '';
+  const s = Math.max(0, Math.floor((Date.now() - Date.parse(iso))/1000));
+  if (s<60) return s+'s';
+  const m=Math.floor(s/60);
+  return m<60 ? (m+'m '+(s%60)+'s') : (Math.floor(m/60)+'h '+(m%60)+'m');
+}
+function renderWelcomeLive(){
+  const box=$('#welcomeLive'); if(!box) return;
+  const onWelcome = $('#right') && $('#right').classList.contains('welcome');
+  const has = (LIVE.running && LIVE.running.length) || (LIVE.broken && LIVE.broken.length);
+  if (!onWelcome || !has){ box.innerHTML=''; box.style.display='none'; return; }
+  const rows=[];
+  (LIVE.running||[]).forEach(r => rows.push(
+    '<div class="live-row"><span class="lpdot"></span><span class="lr-nm">'+esc(r.name||('#'+r.agent_id))+
+    '</span><span class="lr-meta">running · '+_elapsed(r.started_at)+
+    '</span><a class="lr-act" href="#" onclick="gotoRoutine('+r.agent_id+');return false">View</a></div>'));
+  (LIVE.broken||[]).forEach(b => rows.push(
+    '<div class="live-row"><span class="lpdot err"></span><span class="lr-nm">'+esc(b.name||('#'+b.agent_id))+
+    '</span><span class="lr-meta err">'+esc(b.error)+
+    '</span><a class="lr-act" href="#" onclick="gotoRoutine('+b.agent_id+');return false">View</a></div>'));
+  box.style.display='block'; box.innerHTML = '<div class="live-head">Live activity</div>' + rows.join('');
+}
+window.gotoRoutine = (id) => { showView('routines'); openTask(id); };
+
 async function boot(){
   let user;
   try { user = await fetch('/api/auth/me').then(r => r.ok ? r.json() : Promise.reject(r.status)); }
@@ -2685,9 +2750,9 @@ async function boot(){
   $('#navObs').style.display = (ME && ME.role==='admin') ? '' : 'none';   // observability is admin/oversight
   try { BOOT_VERSION = (await api('/api/version')).version; } catch(e){}   // baseline for auto-reload
   health(); loadProviders(); loadSkills();
-  loadConnectors(); loadNotifs();          // populate sidebar counts
+  loadConnectors(); loadNotifs(); loadLive();          // populate sidebar counts + live status
   applyRoute();                             // route from the URL: /app, /app/chat/<id>, /app/<menu>
-  if (!POLL) POLL = setInterval(() => { loadNotifs(); checkVersion(); if (CURVIEW()==='routines') loadTasks(); }, 8000);
+  if (!POLL) POLL = setInterval(() => { loadNotifs(); loadLive(); checkVersion(); if (CURVIEW()==='routines') loadTasks(); }, 8000);
 }
 
 // Auto-reload open tabs after a deploy: the server's build id changes on restart;
