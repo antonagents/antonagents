@@ -136,11 +136,33 @@
   /* ---- shell: sidebar + content ---- */
   #shell{ display:grid; grid-template-columns:258px 1fr; height:calc(100vh - 55px);
     transition:grid-template-columns .2s var(--ease); }
-  /* collapsed = icon rail (still clickable), not fully hidden */
-  #shell.nav-collapsed{ grid-template-columns:54px 1fr; }
-  #shell.nav-collapsed #sidebar{ padding:var(--sp-4) 8px; }
-  #shell.nav-collapsed .navitem{ justify-content:center; padding:9px 0; }
-  #shell.nav-collapsed .nl,#shell.nav-collapsed .navcount{ display:none; }
+  /* collapsed = icon rail (60px): active bar + live badges + hover tooltips + history flyout */
+  #shell.nav-collapsed{ grid-template-columns:60px 1fr; }
+  #shell.nav-collapsed #sidebar{ padding:10px 0; gap:4px; align-items:center; overflow:visible; }
+  /* icon tiles */
+  #shell.nav-collapsed .navitem{ width:38px; height:38px; padding:0; margin:0; justify-content:center;
+    border-radius:10px; position:relative; }
+  #shell.nav-collapsed .navitem:hover{ background:var(--surface-2); }
+  #shell.nav-collapsed .navitem:hover .ni{ color:var(--fg); }
+  /* active = raised tile + 2px accent bar on the rail's left edge (fills read as buttons at this size) */
+  #shell.nav-collapsed .navitem.on{ background:var(--surface-2); font-weight:500; }
+  #shell.nav-collapsed .navitem.on .ni{ color:var(--fg); }
+  #shell.nav-collapsed .navitem.on::before{ content:""; position:absolute; left:-11px; top:9px;
+    width:2px; height:20px; border-radius:2px; background:var(--accent); }
+  /* label becomes a hover tooltip to the right (400ms delay), escaping the rail */
+  #shell.nav-collapsed .nl{ display:block; position:absolute; left:46px; top:50%; transform:translateY(-50%);
+    background:var(--surface-2); border:1px solid var(--line-strong); border-radius:8px; padding:6px 11px;
+    font-size:var(--fs-sm); font-weight:500; color:var(--fg); white-space:nowrap; box-shadow:0 8px 20px rgba(0,0,0,.42);
+    opacity:0; visibility:hidden; pointer-events:none; z-index:140;
+    transition:opacity .12s var(--ease) .4s, visibility 0s .4s; }
+  #shell.nav-collapsed .navitem:hover .nl{ opacity:1; visibility:visible; }
+  /* live state that survives collapse: routines = green dot, alerts = red count; connectors count hidden */
+  #shell.nav-collapsed .navcount{ position:absolute; top:2px; right:2px; margin:0; }
+  #shell.nav-collapsed #navConn{ display:none; }
+  #shell.nav-collapsed #navRoutines{ top:5px; right:5px; width:8px; height:8px; min-width:0; padding:0;
+    border-radius:999px; background:var(--ok); border:2px solid var(--surface); font-size:0; color:transparent; overflow:hidden; }
+  #shell.nav-collapsed #navAlerts{ min-width:15px; height:15px; padding:0 3px; border-radius:999px;
+    background:var(--err); color:var(--accent-ink); font-size:9.5px; line-height:11px; border:2px solid var(--surface); }
   #sidebar{ border-right:1px solid var(--line); padding:var(--sp-4) var(--sp-3); display:flex;
     flex-direction:column; gap:2px; background:var(--glass); overflow:hidden;
     backdrop-filter:var(--blur); -webkit-backdrop-filter:var(--blur);
@@ -173,8 +195,29 @@
   .acct-role{ font-size:11px; color:var(--muted); }
   .acct-caret{ margin-left:auto; color:var(--muted); display:inline-flex; flex:none; }
   .acct-caret svg{ width:14px; height:14px; }
-  #shell.nav-collapsed .acct{ justify-content:center; padding:9px 0; border-top:0; }
+  #shell.nav-collapsed .acct{ width:38px; height:38px; padding:0; margin:6px 0 4px; justify-content:center; border-top:0; }
   #shell.nav-collapsed .acct-id,#shell.nav-collapsed .acct-caret{ display:none; }
+  #shell.nav-collapsed .acct-av{ width:28px; height:28px; }
+  /* history tile — collapsed-only, pinned above the avatar, opens a chat-history flyout */
+  .rail-history{ display:none; }
+  #shell.nav-collapsed .rail-history{ display:flex; align-items:center; justify-content:center;
+    width:38px; height:38px; margin-top:auto; padding:0; border-radius:10px; background:var(--surface-2);
+    border:1px solid var(--line); color:var(--fg-2); cursor:pointer; }
+  #shell.nav-collapsed .rail-history:hover{ color:var(--fg); border-color:var(--line-strong); }
+  #shell.nav-collapsed .rail-history svg{ width:18px; height:18px; }
+  .rail-flyout{ position:fixed; left:66px; bottom:54px; width:286px; z-index:200; display:none;
+    background:var(--surface); border:1px solid var(--line-strong); border-radius:var(--r-md);
+    box-shadow:0 22px 60px rgba(0,0,0,.5); padding:10px; }
+  .rail-flyout .rh-head{ display:flex; align-items:center; justify-content:space-between; padding:2px 6px 10px; }
+  .rail-flyout .rh-title{ font-family:var(--font-mono); font-size:10.5px; letter-spacing:.14em; color:var(--muted); }
+  .rail-flyout .rh-new{ background:none; border:0; color:var(--accent); font-family:var(--font-sans);
+    font-size:var(--fs-sm); cursor:pointer; padding:0; }
+  .rail-flyout .rh-item{ display:block; width:100%; text-align:left; background:none; border:0; color:var(--fg-2);
+    font-family:var(--font-sans); font-size:var(--fs-sm); padding:7px 8px; border-radius:8px; cursor:pointer;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rail-flyout .rh-item:hover{ background:var(--surface-2); color:var(--fg); }
+  .rail-flyout .rh-item.on{ background:var(--surface-2); color:var(--fg); }
+  .rail-flyout .rh-empty{ padding:7px 8px; font-size:var(--fs-sm); color:var(--muted); }
   .acct-menu{ position:fixed; left:10px; bottom:56px; width:236px; z-index:200;
     background:var(--surface); border:1px solid var(--line-strong); border-radius:var(--r-md);
     box-shadow:0 14px 34px rgba(0,0,0,.42); padding:6px; }
@@ -963,6 +1006,10 @@
       <button class="full" onclick="newChat()">+ New chat</button>
       <div id="chatThreads"></div>
     </div>
+    <button class="rail-history" onclick="toggleRailHistory(event)" title="Chat history" aria-label="Chat history">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h13"/></svg>
+    </button>
+    <div class="rail-flyout" id="railHistory"></div>
     <button class="acct" id="acctBtn" onclick="toggleAcctMenu(event)" title="Account" style="display:none">
       <span class="acct-av" id="acctAv">–</span>
       <span class="acct-id">
@@ -1422,6 +1469,7 @@ function clog(){ return document.querySelector(CONV.log) || document.querySelect
 function toggleNav(){
   const collapsed = $('#shell').classList.toggle('nav-collapsed');
   try { localStorage.setItem('sa-nav', collapsed ? 'closed' : 'open'); } catch(e){}
+  if (!collapsed && window.closeRailHistory) closeRailHistory();   // flyout is collapsed-only
 }
 function showView(name, opts){
   opts = opts || {};
@@ -2646,8 +2694,23 @@ window.switchOrg = async (id) => {
   catch(e){ toast(e.detail||e.message||'error','err'); return; }
   location.href = '/app';   // clean reload into the new org's context
 };
-document.addEventListener('click', e => {   // close the account menu on outside click
+// collapsed-rail chat-history flyout — reach chat history without expanding the rail
+window.closeRailHistory = () => { const f=$('#railHistory'); if (f) f.style.display='none'; };
+window.toggleRailHistory = (e) => {
+  if (e) e.stopPropagation();
+  const f = $('#railHistory'); if (!f) return;
+  if (f.style.display === 'block'){ f.style.display='none'; return; }
+  const items = (CHATS||[]).slice(0,8).map(c => {
+    const nm = esc(c.name||'New chat');
+    return `<button class="rh-item ${c.id===CURRENT_CHAT_ID?'on':''}" title="${nm}" onclick="openChat(${c.id});closeRailHistory()">${nm}</button>`;
+  }).join('') || '<div class="rh-empty">No chats yet — start one.</div>';
+  f.innerHTML = '<div class="rh-head"><span class="rh-title">HISTORY</span>'
+    + '<button class="rh-new" onclick="newChat();closeRailHistory()">New chat</button></div>' + items;
+  f.style.display='block';
+};
+document.addEventListener('click', e => {   // close account menu + history flyout on outside click
   if (!e.target.closest('#acctBtn') && !e.target.closest('#acctMenu')){ const m=$('#acctMenu'); if (m) m.style.display='none'; }
+  if (!e.target.closest('.rail-history') && !e.target.closest('#railHistory')) closeRailHistory();
 });
 
 async function loadMembers(){
