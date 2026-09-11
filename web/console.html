@@ -153,9 +153,10 @@
   #shell.nav-collapsed .nl{ display:block; position:absolute; left:46px; top:50%; transform:translateY(-50%);
     background:var(--surface-2); border:1px solid var(--line-strong); border-radius:8px; padding:6px 11px;
     font-size:var(--fs-sm); font-weight:500; color:var(--fg); white-space:nowrap; box-shadow:0 8px 20px rgba(0,0,0,.42);
-    opacity:0; visibility:hidden; pointer-events:none; z-index:140;
+    opacity:0; visibility:hidden; pointer-events:none; z-index:140; transition:none; }
+  /* the 400ms delay is on the HOVER (show) side only — collapsing hides labels instantly, no lingering flash */
+  #shell.nav-collapsed .navitem:hover .nl{ opacity:1; visibility:visible;
     transition:opacity .12s var(--ease) .4s, visibility 0s .4s; }
-  #shell.nav-collapsed .navitem:hover .nl{ opacity:1; visibility:visible; }
   /* live state that survives collapse: routines = green dot, alerts = red count; connectors count hidden */
   #shell.nav-collapsed .navcount{ position:absolute; top:2px; right:2px; margin:0; }
   #shell.nav-collapsed #navConn{ display:none; }
