@@ -766,6 +766,9 @@
   .lpdot.err{ background:var(--err); box-shadow:0 0 0 3px var(--err-soft); animation:none; }
   .navcount.live{ background:var(--ok); color:#04120b; }
   .welcome-live{ display:none; max-width:720px; margin:22px auto 0; width:100%; text-align:left; }
+  /* Live activity belongs to the welcome screen only — never let it linger after a chat opens
+     (renderWelcomeLive sets an inline display that would otherwise persist until the next poll) */
+  #right:not(.welcome) #welcomeLive{ display:none !important; }
   .welcome-live .live-head{ font-family:var(--font-sans); font-size:var(--fs-xs); text-transform:uppercase;
     letter-spacing:.08em; color:var(--muted); margin-bottom:10px; }
   .live-row{ display:flex; align-items:center; gap:var(--sp-3); padding:11px 13px; border:1px solid var(--line);
@@ -1010,7 +1013,6 @@
     <button class="rail-history" onclick="toggleRailHistory(event)" title="Chat history" aria-label="Chat history">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h13"/></svg>
     </button>
-    <div class="rail-flyout" id="railHistory"></div>
     <button class="acct" id="acctBtn" onclick="toggleAcctMenu(event)" title="Account" style="display:none">
       <span class="acct-av" id="acctAv">–</span>
       <span class="acct-id">
@@ -1019,7 +1021,6 @@
       </span>
       <span class="acct-caret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></span>
     </button>
-    <div class="acct-menu" id="acctMenu" style="display:none"></div>
   </nav>
 
   <div id="content">
@@ -1266,6 +1267,11 @@
     </section>
   </div>
 </div>
+
+<!-- bottom-left flyouts live at body level (outside #sidebar's backdrop-filter, which would
+     otherwise trap position:fixed and let chat content paint over them) -->
+<div class="rail-flyout" id="railHistory"></div>
+<div class="acct-menu" id="acctMenu" style="display:none"></div>
 
 <script>
 const $ = s => document.querySelector(s);
