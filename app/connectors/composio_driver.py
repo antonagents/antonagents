@@ -23,6 +23,7 @@ from .base import Connector
 _CATALOG = [
     # Communication
     ("Communication", "gmail", "Gmail"),
+    ("Communication", "outlook", "Outlook"),
     ("Communication", "slack", "Slack"),
     ("Communication", "discord", "Discord"),
     ("Communication", "intercom", "Intercom"),
