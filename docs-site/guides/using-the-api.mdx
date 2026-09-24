@@ -57,6 +57,46 @@ The response includes the run's status and its `events`, assistant messages, too
 calls, and the final result. Poll until the status is `succeeded`, `failed`, or
 `interrupted`.
 
+### Or: wait for the reply in one call
+
+Add `?wait=N` to `chat` or `run` to hold the request open for up to `N` seconds
+(capped at 300 by default) and get the finished answer back directly:
+
+```bash
+curl "https://app.over-watch.in/v1/agents/ag_YOURAGENTID/chat?wait=300" \
+  -H "Authorization: Bearer sk_ag_YOURKEY" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Summarize yesterday'"'"'s failed orders."}'
+```
+
+```json
+{
+  "run_id": 245, "agent_id": "ag_YOURAGENTID",
+  "status": "succeeded", "done": true,
+  "result": "3 orders failed yesterday: ...", "error": null,
+  "cost_usd": 0.041, "created_at": "...", "started_at": "...", "finished_at": "..."
+}
+```
+
+If the agent is still working when the wait runs out, you get the same shape with
+`"done": false`, so fall back to polling or streaming with the `run_id`.
+
+### Or: stream it live
+
+`GET /v1/runs/{run_id}/stream` is a server-sent events stream. It replays what
+already happened, then sends events as they occur (tool calls, assistant text),
+ending with a `status` event.
+
+```bash
+curl -N "https://app.over-watch.in/v1/runs/245/stream?public_id=ag_YOURAGENTID" \
+  -H "Authorization: Bearer sk_ag_YOURKEY"
+```
+
+## Use the agent as an MCP server
+
+The same key also mounts the agent as a tool in any MCP client (Claude Code,
+Claude Desktop, Cursor, other agents). See [Agents as MCP servers](/guides/mcp-server).
+
 ## Rate limits
 
 Each key is rate-limited (a token bucket, sustained requests per minute with a

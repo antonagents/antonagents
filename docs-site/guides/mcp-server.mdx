@@ -1,0 +1,75 @@
+---
+title: "Agents as MCP servers"
+description: "Mount any agent as a tool in Claude Code, Claude Desktop, Cursor or another agent."
+---
+
+Every agent is also a [Model Context Protocol](https://modelcontextprotocol.io)
+server. Point an MCP client at it and the agent shows up as a tool the client's
+model can call. It runs in its own isolated sandbox with its own connectors, skills
+and data sources, and the client gets back the answer.
+
+## 1. Get the URL and a key
+
+Open the agent's **API** panel in the console. You need:
+
+- The MCP URL: `https://app.over-watch.in/v1/agents/ag_YOURAGENTID/mcp`
+- An API key (`sk_ag_...`), created in the same panel. It is the same kind of key
+  the REST API uses, scoped to this one agent.
+
+The panel's **Use it as an MCP server** section shows both, ready to copy.
+
+## 2. Add it to your client
+
+<Tabs>
+  <Tab title="Claude Code">
+    ```bash
+    claude mcp add --transport http my-agent \
+      https://app.over-watch.in/v1/agents/ag_YOURAGENTID/mcp \
+      --header "Authorization: Bearer sk_ag_YOURKEY"
+    ```
+  </Tab>
+  <Tab title="JSON config">
+    Most clients (Cursor, Claude Desktop via a remote-server config, and others)
+    accept this shape:
+
+    ```json
+    {
+      "mcpServers": {
+        "my-agent": {
+          "type": "http",
+          "url": "https://app.over-watch.in/v1/agents/ag_YOURAGENTID/mcp",
+          "headers": { "Authorization": "Bearer sk_ag_YOURKEY" }
+        }
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Tools
+
+| Tool | What it does |
+| --- | --- |
+| `ask(message)` | Runs the agent on your message and returns its reply. Follow-ups continue the same conversation. |
+| `run()` | Runs the agent's standing instruction. Only listed when the agent has one. |
+| `get_run(run_id)` | Gets the status and result of an earlier run. |
+
+## Long-running agents
+
+An agent run can take minutes. While `ask` or `run` is working, the server streams
+MCP progress notifications (for example "using WebFetch"), which keeps clients
+that reset their timeout on progress connected.
+
+If the run still hasn't finished after 10 minutes, the tool returns
+`The agent is still working (run 245 ...)`. The calling model can then use
+`get_run` with that id to fetch the result. The run keeps going either way: it
+also shows up in the console's run history like any other run.
+
+## Good to know
+
+- **Transport:** Streamable HTTP, stateless. There are no sessions to manage and it
+  works behind any proxy.
+- **Rate limits:** MCP requests count against the key's `/v1` rate limit.
+- **Revoking** the key in the console cuts off the MCP client immediately.
+- **Self-hosting:** tune the wait with `SUPERAGENT_MCP_WAIT_SECONDS` (default 600)
+  and the REST `?wait` cap with `SUPERAGENT_V1_MAX_WAIT` (default 300).

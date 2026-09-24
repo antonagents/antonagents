@@ -37,7 +37,8 @@
             "pages": [
               "guides/build-a-routine",
               "guides/chat-and-files",
-              "guides/using-the-api"
+              "guides/using-the-api",
+              "guides/mcp-server"
             ]
           }
         ]

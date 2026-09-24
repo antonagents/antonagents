@@ -31,7 +31,8 @@ Authorization: Bearer sk_ag_...
 
 ## The shape of a call
 
-Agent calls are **asynchronous**: you start a run and poll for its result.
+Agent calls are **runs**: you start one, then get its result in whichever way
+suits your integration.
 
 <Steps>
   <Step title="Start a run">
@@ -39,11 +40,18 @@ Agent calls are **asynchronous**: you start a run and poll for its result.
     `POST /v1/agents/{public_id}/run` (use the agent's default instruction).
     Returns a `run_id`.
   </Step>
-  <Step title="Poll the run">
-    `GET /v1/runs/{run_id}?public_id={public_id}` until its status is terminal
-    (`succeeded`, `failed`, `interrupted`). The response carries the run's events.
+  <Step title="Get the result">
+    - **Wait:** add `?wait=N` to the call above to block up to `N` seconds and get
+      the result in the same response (`done: false` if it's still running).
+    - **Poll:** `GET /v1/runs/{run_id}?public_id={public_id}` until its status is
+      terminal (`succeeded`, `failed`, `interrupted`).
+    - **Stream:** `GET /v1/runs/{run_id}/stream?public_id={public_id}` for live
+      server-sent events.
   </Step>
 </Steps>
+
+Every agent is also an **MCP server** at `POST /v1/agents/{public_id}/mcp`, using
+the same key. See [Agents as MCP servers](/guides/mcp-server).
 
 ## Rate limiting
 

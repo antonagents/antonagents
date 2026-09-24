@@ -24,7 +24,12 @@ Endpoints (representative)
     GET  /api/runs/{id}/stream      -> live SSE event stream
     (also: /api/connectors*, /api/skills*, /api/org* — teams & invitations)
 
-All API endpoints require a session and are scoped to the caller's active org —
+    Programmatic (Bearer sk_ag_… per-agent key; see serving.py):
+    POST /v1/agents/{pid}/chat|run  -> start a run (?wait=N returns the result)
+    GET  /v1/runs/{id}[/stream]     -> run + events · live SSE
+    POST /v1/agents/{pid}/mcp       -> the agent as an MCP server (mcp_server.py)
+
+All /api endpoints require a session and are scoped to the caller's active org —
 a resource outside that org returns 404.
 """
 import asyncio
@@ -44,7 +49,8 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import auth, config, connectors, db, providers, ratelimit, runner, scheduler, templates
+from . import (auth, config, connectors, db, mcp_server, providers, ratelimit, runner,
+               scheduler, serving, templates)
 from .auth import current_user
 from .connectors import db_driver
 from .models import (AgentAlertsIn, AgentConnectorsIn, AgentCreate, AgentModelIn, AgentNameIn,
@@ -956,23 +962,57 @@ async def _agent_from_api_key(request: Request, public_id: str) -> dict:
     return agent
 
 
-@app.post("/v1/agents/{public_id}/chat")
-async def v1_chat(public_id: str, body: V1ChatIn, request: Request):
-    """Send a message to the agent; returns the run id. Resumes the agent session."""
+def _wait_seconds(wait: int) -> int:
+    return max(0, min(wait, config.V1_MAX_WAIT))
+
+
+async def _v1_started(agent: dict, run_id: int, wait: int) -> dict:
+    """Response for a /v1 call that started a run: just the id, or — with
+    `?wait=N` — the run's outcome once it finishes (or its current state if it
+    is still going after N seconds; check `done`)."""
+    if not wait:
+        return {"run_id": run_id, "agent_id": agent["public_id"]}
+    run = await serving.wait_for_run(run_id, _wait_seconds(wait))
+    return serving.run_summary(run, agent["public_id"])
+
+
+@app.get("/v1/agents/{public_id}")
+async def v1_get_agent(public_id: str, request: Request):
+    """The agent this key reaches: its name and how to call it (REST + MCP)."""
     agent = await _agent_from_api_key(request, public_id)
-    resume = bool(agent.get("last_session_id"))
-    run_id = await db.create_run(agent["id"], prompt=body.message, resume=resume)
-    await runner.start_run(run_id, agent)
-    return {"run_id": run_id, "agent_id": public_id}
+    return {
+        "agent_id": public_id,
+        "name": agent["name"],
+        "kind": agent.get("kind") or "routine",
+        "has_default_instruction": bool((agent.get("prompt") or "").strip()),
+        "mcp_url": f"{_base_url(request)}/v1/agents/{public_id}/mcp",
+    }
+
+
+@app.post("/v1/agents/{public_id}/chat")
+async def v1_chat(public_id: str, body: V1ChatIn, request: Request,
+                  wait: int = Query(0, ge=0, description="seconds to wait for the result")):
+    """Send a message to the agent; returns the run id (or, with ?wait=N, the
+    result). Resumes the agent session."""
+    agent = await _agent_from_api_key(request, public_id)
+    run_id = await serving.start_chat(agent, body.message)
+    return await _v1_started(agent, run_id, wait)
 
 
 @app.post("/v1/agents/{public_id}/run")
-async def v1_run(public_id: str, request: Request):
+async def v1_run(public_id: str, request: Request,
+                 wait: int = Query(0, ge=0, description="seconds to wait for the result")):
     """Trigger the agent with its default instruction."""
     agent = await _agent_from_api_key(request, public_id)
-    run_id = await db.create_run(agent["id"], prompt=agent["prompt"])
-    await runner.start_run(run_id, agent)
-    return {"run_id": run_id, "agent_id": public_id}
+    run_id = await serving.start_default(agent)
+    return await _v1_started(agent, run_id, wait)
+
+
+async def _v1_owned_run(run_id: int, agent: dict) -> dict:
+    run = await db.get_run(run_id)
+    if not run or run.get("agent_id") != agent["id"]:
+        raise HTTPException(404, "run not found")
+    return run
 
 
 @app.get("/v1/runs/{run_id}")
@@ -980,11 +1020,33 @@ async def v1_get_run(run_id: int, request: Request,
                      public_id: str = Query(..., description="the agent's public id")):
     """Fetch a run + its events. Scoped: the key's agent must own the run."""
     agent = await _agent_from_api_key(request, public_id)
-    run = await db.get_run(run_id)
-    if not run or run.get("agent_id") != agent["id"]:
-        raise HTTPException(404, "run not found")
+    run = await _v1_owned_run(run_id, agent)
     run["events"] = await db.get_events(run_id)
     return run
+
+
+@app.get("/v1/runs/{run_id}/stream")
+async def v1_stream_run(run_id: int, request: Request,
+                        public_id: str = Query(..., description="the agent's public id")):
+    """Server-sent events for a run: stored events replayed, then live ones until
+    it finishes (the last frame is a `status` event)."""
+    agent = await _agent_from_api_key(request, public_id)
+    await _v1_owned_run(run_id, agent)
+    return StreamingResponse(serving.sse_events(run_id), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# Each agent is also an MCP server (Streamable HTTP, stateless) — see mcp_server.py.
+@app.post("/v1/agents/{public_id}/mcp", include_in_schema=False)
+async def v1_mcp(public_id: str, request: Request):
+    agent = await _agent_from_api_key(request, public_id)
+    return await mcp_server.handle(agent, request)
+
+
+@app.api_route("/v1/agents/{public_id}/mcp", methods=["GET", "DELETE"], include_in_schema=False)
+async def v1_mcp_other(public_id: str):
+    # stateless server: no standalone SSE stream (GET) and no sessions (DELETE)
+    return Response(status_code=405, headers={"Allow": "POST"})
 
 
 @app.put("/api/agents/{agent_id}/schedule")
@@ -1198,27 +1260,7 @@ async def stream_run(run_id: int, user: dict = Depends(current_user)):
     if not run:
         raise HTTPException(404, "run not found")
 
-    async def gen():
-        # replay stored events first so a late subscriber sees the whole run
-        for ev in await db.get_events(run_id):
-            yield f"data: {json.dumps(ev)}\n\n"
-        # if the run already finished, close immediately
-        current = await db.get_run(run_id)
-        if current and current["status"] not in ("queued", "running"):
-            yield f"data: {json.dumps({'type': 'status', 'status': current['status']})}\n\n"
-            return
-        # otherwise subscribe to live events
-        q = runner.subscribe(run_id)
-        try:
-            while True:
-                ev = await q.get()
-                if ev is None:  # sentinel: run finished
-                    break
-                yield f"data: {json.dumps(ev)}\n\n"
-        finally:
-            runner.unsubscribe(run_id, q)
-
-    return StreamingResponse(gen(), media_type="text/event-stream",
+    return StreamingResponse(serving.sse_events(run_id), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
                                       "X-Accel-Buffering": "no"})
 

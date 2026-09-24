@@ -128,6 +128,13 @@ UPLOAD_MAX_MB = int(os.environ.get("SUPERAGENT_UPLOAD_MAX_MB", "25"))
 V1_RATE_PER_MIN = int(os.environ.get("SUPERAGENT_V1_RATE_PER_MIN", "120"))
 V1_RATE_BURST = int(os.environ.get("SUPERAGENT_V1_RATE_BURST", str(V1_RATE_PER_MIN)))
 
+# Longest a /v1 chat/run call may block with `?wait=N` before answering with the
+# still-running run (the caller then polls or streams it).
+V1_MAX_WAIT = int(os.environ.get("SUPERAGENT_V1_MAX_WAIT", "300"))
+# How long an MCP `ask`/`run` tool call waits for the agent before returning the
+# run id for `get_run`. Streaming (SSE) calls send progress while they wait.
+MCP_WAIT_SECONDS = int(os.environ.get("SUPERAGENT_MCP_WAIT_SECONDS", "600"))
+
 # Signup gating. "open" (default — right for self-hosting) allows self-signup.
 # "invite" requires a pending invitation for the email — use this on a shared
 # hosted instance to control who can consume its (finite) compute and your

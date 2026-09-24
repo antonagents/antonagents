@@ -962,6 +962,11 @@
         <summary>How to call it</summary>
         <pre id="apiExample" class="api-example"></pre>
       </details>
+      <details class="agent-details" style="margin-top:8px">
+        <summary>Use it as an MCP server</summary>
+        <div class="hint" style="margin:8px 0">Mount this agent as a tool in Claude Code, Claude Desktop, Cursor or any MCP client. Its <code>ask</code> tool runs the agent and returns the reply.</div>
+        <pre id="apiMcpExample" class="api-example"></pre>
+      </details>
     </div>
   </div>
 </div>
@@ -1849,7 +1854,17 @@ function apiExampleText(){
   return `# send a message\ncurl ${base}/v1/agents/${API_PUBLIC_ID}/chat \\\n`
     + `  -H "Authorization: Bearer YOUR_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"message": "hello"}'\n\n`
     + `# get the result (use the run_id returned above)\ncurl "${base}/v1/runs/RUN_ID?public_id=${API_PUBLIC_ID}" \\\n`
-    + `  -H "Authorization: Bearer YOUR_KEY"`;
+    + `  -H "Authorization: Bearer YOUR_KEY"\n\n`
+    + `# or send and wait for the reply in one call (up to 300s)\ncurl "${base}/v1/agents/${API_PUBLIC_ID}/chat?wait=300" \\\n`
+    + `  -H "Authorization: Bearer YOUR_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"message": "hello"}'`;
+}
+function apiMcpText(){
+  const url = `${location.origin}/v1/agents/${API_PUBLIC_ID}/mcp`;
+  return `# Claude Code\nclaude mcp add --transport http my-agent ${url} \\\n`
+    + `  --header "Authorization: Bearer YOUR_KEY"\n\n`
+    + `# any MCP client (JSON config)\n`
+    + JSON.stringify({mcpServers: {"my-agent": {type: "http", url,
+        headers: {Authorization: "Bearer YOUR_KEY"}}}}, null, 2);
 }
 window.openApiKeys = async (id) => {
   if (id==null) return;
@@ -1867,6 +1882,7 @@ async function refreshApiKeys(){
   API_PUBLIC_ID = r.public_agent_id;
   $('#apiPublicId').textContent = API_PUBLIC_ID;
   $('#apiExample').textContent = apiExampleText();
+  $('#apiMcpExample').textContent = apiMcpText();
   // show only active keys — a revoked key is dead, so drop it from the list
   const keys = (r.keys||[]).filter(k => !k.revoked);
   $('#apiKeyList').innerHTML = keys.length ? keys.map(k => {
