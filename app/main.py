@@ -492,6 +492,7 @@ async def get_agent(agent_id: int, user: dict = Depends(current_user)):
         for c in await db.get_agent_db_connections(agent_id)
     ]
     out["baseline_minutes"] = agent.get("baseline_minutes")
+    out["timeout_secs"] = agent.get("timeout_secs")
     out["impact"] = _with_cost(await db.agent_impact(agent_id, agent.get("baseline_minutes")))
     out["alerts"] = await db.get_agent_alerts(agent_id)
     return out
@@ -1000,6 +1001,8 @@ async def set_schedule(agent_id: int, body: AgentScheduleIn,
     except Exception as e:
         raise HTTPException(400, f"invalid schedule: {e}")
     await db.set_agent_schedule(agent_id, body.schedule_kind, body.schedule_expr)
+    if body.timeout_secs is not None:   # 0/None from the form clears the override
+        await db.set_agent_timeout(agent_id, body.timeout_secs or None)
     agent = await db.get_agent(agent_id)
     scheduler.remove_agent(agent_id)
     if body.schedule_kind in ("cron", "interval") and agent["enabled"]:

@@ -875,6 +875,8 @@
         <label class="fld-label">Interval (seconds)</label>
         <input id="sch_int" class="modal-input" placeholder="3600   →  hourly"/>
       </div>
+      <label class="fld-label">Max runtime (minutes) — blank = default 60</label>
+      <input id="sch_timeout" class="modal-input" type="number" min="1" max="240" placeholder="e.g. 120 for a long scrape"/>
       <div class="modal-actions">
         <button class="ghost" onclick="closeSchedule()">Cancel</button>
         <button onclick="saveSchedule()">Save</button>
@@ -1113,6 +1115,8 @@
                 </div>
                 <label>Impact baseline — minutes of manual work each run replaces</label>
                 <input id="baseline" type="number" min="0" placeholder="e.g. 30"/>
+                <label>Max runtime — minutes before a run is stopped (blank = default 60)</label>
+                <input id="nr_timeout" type="number" min="1" max="240" placeholder="e.g. 120"/>
                 <label>Connectors — accounts this routine may use</label>
                 <div id="pickConnectors" class="picklist"></div>
                 <label>Skills</label>
@@ -1426,6 +1430,7 @@ async function createRoutine(testRun){
     provider: $('#provider').value || null,
     model: $('#model').value || null,
     baseline_minutes: parseInt($('#baseline').value) || null,
+    timeout_secs: (parseInt($('#nr_timeout').value) || 0) * 60 || null,   // minutes → seconds
     run_now: false,   // we fire the test run ourselves (below) so it streams live
   };
   if (!body.prompt){ $('#msg').textContent='instructions are required'; $('#msg').className='hint err'; return; }
@@ -1440,7 +1445,7 @@ async function createRoutine(testRun){
     if (connectors.length) await api('/api/agents/'+t.id+'/connectors', {method:'PUT', headers:JH, body:JSON.stringify({providers:connectors})});
     if (skill_ids.length) await api('/api/agents/'+t.id+'/skills', {method:'PUT', headers:JH, body:JSON.stringify({skill_ids})});
     if (db_connection_ids.length) await api('/api/agents/'+t.id+'/db-connections', {method:'PUT', headers:JH, body:JSON.stringify({db_connection_ids})});
-    $('#prompt').value=''; $('#title').value=''; $('#baseline').value='';
+    $('#prompt').value=''; $('#title').value=''; $('#baseline').value=''; $('#nr_timeout').value='';
     document.querySelectorAll('.picklist input:checked').forEach(i => i.checked = false);
     await loadTasks(); loadImpact();
     await openTask(t.id);        // show the new routine's detail
@@ -1944,7 +1949,7 @@ async function openTask(id){
       <summary>Details &amp; settings</summary>
       <div class="prompt-echo">${esc(t.prompt)}</div>
       <div class="m">tools · connectors: ${(t.connectors||[]).join(', ')||'—'} · skills: ${(t.skills||[]).map(s=>esc(s.name)).join(', ')||'—'} · db: ${(t.db_connections||[]).map(d=>esc(d.name)).join(', ')||'—'}</div>
-      <div class="m">routine · ${sched}${nextRun} · ${toggle}<a href="#" onclick="editRoutine(${id});return false">edit</a></div>
+      <div class="m">routine · ${sched}${nextRun} · max ${t.timeout_secs?Math.round(t.timeout_secs/60):60}m · ${toggle}<a href="#" onclick="editRoutine(${id});return false">edit</a></div>
       <div class="m">impact · ${t.impact?t.impact.runs_succeeded:0}/${t.impact?t.impact.runs:0} done · ${t.impact?t.impact.minutes_saved:0} min saved · ${_usd(t.impact?t.impact.cost_saved_usd:0)} value · ${_usd(t.impact?t.impact.spend_usd:0)} spent</div>
       <div class="m">alerts · ${(t.alerts||[]).filter(a=>a.enabled).map(a=>esc(alertLabel(a))).join(', ')||'none'} · <a href="#" onclick="editAlerts(${id});return false">edit</a></div>
       <div class="m">runs · ${runs.map(r=>`<a href="#" onclick="watchRunId(${r.id});return false">#${r.id} ${r.status}</a>`).join('  ')||'none'}</div>
@@ -2046,6 +2051,7 @@ window.editRoutine = async id => {
   $('#sch_kind').value = kind;
   $('#sch_cron').value = (t && t.schedule_kind==='cron') ? (t.schedule_expr||'') : '';
   $('#sch_int').value  = (t && t.schedule_kind==='interval') ? (t.schedule_expr||'') : '';
+  $('#sch_timeout').value = (t && t.timeout_secs) ? Math.round(t.timeout_secs/60) : '';
   _schKindChange();
   $('#scheduleModal').style.display = 'flex';
 };
@@ -2054,9 +2060,10 @@ window.saveSchedule = async () => {
   const id = SCHED_AGENT, kind = $('#sch_kind').value;
   const expr = kind==='cron' ? $('#sch_cron').value.trim()
              : kind==='interval' ? $('#sch_int').value.trim() : null;
+  const timeout_secs = (parseInt($('#sch_timeout').value) || 0) * 60;   // 0 = clear override → default
   try {
     await api('/api/agents/'+id+'/schedule', {method:'PUT', headers:{'content-type':'application/json'},
-      body:JSON.stringify({schedule_kind:kind, schedule_expr:expr})});
+      body:JSON.stringify({schedule_kind:kind, schedule_expr:expr, timeout_secs})});
     toast('Schedule updated','ok'); closeSchedule(); await loadTasks(); openTask(id);
   } catch(e){ toast(e.detail||e.message||'error','err'); }
 };

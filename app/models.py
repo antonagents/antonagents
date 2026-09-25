@@ -78,6 +78,8 @@ class AgentCreate(BaseModel):
     max_turns: Optional[int] = None
     # manual minutes this agent's run replaces — powers the impact view
     baseline_minutes: Optional[int] = Field(None, ge=0, le=100000)
+    # per-run wall-clock override in seconds; clamped server-side, NULL = global default
+    timeout_secs: Optional[int] = Field(None, ge=0, le=100000)
 
     run_now: bool = False   # optionally fire one run immediately on create
 
@@ -86,6 +88,8 @@ class AgentScheduleIn(BaseModel):
     schedule_kind: ScheduleKind = "once"
     # cron: a 5-field crontab expr ("0 9 * * *"); interval: seconds as string ("3600")
     schedule_expr: Optional[str] = None
+    # optional: also update the routine's max runtime from the same modal
+    timeout_secs: Optional[int] = Field(None, ge=0, le=100000)
 
 
 class AgentNameIn(BaseModel):

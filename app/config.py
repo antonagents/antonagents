@@ -10,7 +10,23 @@ DB_PATH = os.environ.get("SUPERAGENT_DB", str(BASE_DIR / "data" / "superagent.db
 # task execution
 TASK_IMAGE = os.environ.get("SUPERAGENT_TASK_IMAGE", "superagent-task:latest")
 MAX_CONCURRENT = int(os.environ.get("SUPERAGENT_MAX_CONCURRENT", "3"))
-TASK_TIMEOUT = int(os.environ.get("SUPERAGENT_TASK_TIMEOUT", "3600"))  # seconds
+TASK_TIMEOUT = int(os.environ.get("SUPERAGENT_TASK_TIMEOUT", "3600"))  # default wall-clock, seconds
+# hard ceiling for a per-agent timeout override — a runaway run can't hold one of
+# the MAX_CONCURRENT slots (or burn tokens) longer than this, whatever a routine asks for.
+MAX_TASK_TIMEOUT = int(os.environ.get("SUPERAGENT_MAX_TASK_TIMEOUT", "14400"))  # 4h
+
+
+def clamp_timeout(secs) -> "Optional[int]":
+    """Clamp a per-agent timeout override to [60, MAX_TASK_TIMEOUT]. Falsy/invalid → None
+    (meaning: fall back to the global TASK_TIMEOUT default)."""
+    if not secs:
+        return None
+    try:
+        return max(60, min(int(secs), MAX_TASK_TIMEOUT))
+    except (TypeError, ValueError):
+        return None
+
+
 DEFAULT_MAX_TURNS = int(os.environ.get("SUPERAGENT_MAX_TURNS", "60"))
 # Max size of a single stdout event line from a task container. The container
 # emits one JSON event per line; a big tool result or report can be large, so we

@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS agents (
     allowed_tools_json TEXT,
     max_turns     INTEGER,
     baseline_minutes INTEGER,
+    timeout_secs  INTEGER,   -- per-agent wall-clock override; NULL = global TASK_TIMEOUT
     last_session_id TEXT,
     created_at    TEXT NOT NULL
 );
@@ -253,6 +254,7 @@ async def init() -> None:
     await _db.commit()
     await _migrate()
     await _ensure_column("agents", "baseline_minutes", "INTEGER")
+    await _ensure_column("agents", "timeout_secs", "INTEGER")
     await _ensure_column("agents", "kind", "TEXT NOT NULL DEFAULT 'routine'")
     # stable, unguessable public id for the API surface (/v1/agents/<public_id>)
     await _ensure_column("agents", "public_id", "TEXT")
@@ -472,8 +474,8 @@ async def create_agent(data: dict, *, org_id: int, owner_id: int) -> int:
         """INSERT INTO agents
            (org_id, owner_id, name, kind, prompt, system_prompt, provider, model,
             schedule_kind, schedule_expr, enabled, env_json, allowed_tools_json,
-            max_turns, baseline_minutes, public_id, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            max_turns, baseline_minutes, timeout_secs, public_id, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             org_id, owner_id, data["name"], data.get("kind") or "routine",
             data.get("prompt") or "",
@@ -481,7 +483,8 @@ async def create_agent(data: dict, *, org_id: int, owner_id: int) -> int:
             data.get("schedule_kind") or "once", data.get("schedule_expr"), 1,
             _encrypt_env(data.get("env")),
             json.dumps(data["allowed_tools"]) if data.get("allowed_tools") else None,
-            data.get("max_turns"), data.get("baseline_minutes"), _gen_public_id(), _now(),
+            data.get("max_turns"), data.get("baseline_minutes"),
+            config.clamp_timeout(data.get("timeout_secs")), _gen_public_id(), _now(),
         ),
     )
     await _db.commit()
@@ -531,6 +534,15 @@ async def set_agent_schedule(agent_id: int, kind: str, expr: Optional[str]) -> N
     await _db.execute(
         "UPDATE agents SET schedule_kind=?, schedule_expr=? WHERE id=?",
         (kind, expr, agent_id),
+    )
+    await _db.commit()
+
+
+async def set_agent_timeout(agent_id: int, timeout_secs: Optional[int]) -> None:
+    """Per-agent wall-clock override; None clears it (fall back to global TASK_TIMEOUT)."""
+    await _db.execute(
+        "UPDATE agents SET timeout_secs=? WHERE id=?",
+        (config.clamp_timeout(timeout_secs), agent_id),
     )
     await _db.commit()
 

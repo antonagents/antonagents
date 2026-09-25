@@ -508,12 +508,14 @@ async def execute_run(run_id: int, agent: dict) -> None:
                     event = {"type": "log", "text": line}
                 await handle(event)
 
+        # per-agent wall-clock override (clamped), else the global default
+        run_timeout = config.clamp_timeout(agent.get("timeout_secs")) or config.TASK_TIMEOUT
         try:
-            await asyncio.wait_for(pump_stdout(), timeout=config.TASK_TIMEOUT)
+            await asyncio.wait_for(pump_stdout(), timeout=run_timeout)
             await proc.wait()
             exit_code = proc.returncode
         except asyncio.TimeoutError:
-            error = f"timed out after {config.TASK_TIMEOUT}s"
+            error = f"timed out after {run_timeout}s"
             await handle({"type": "error", "message": error})
             await _kill_container(run_id, proc)
             exit_code = 124
