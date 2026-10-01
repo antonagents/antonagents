@@ -461,6 +461,10 @@ async def execute_run(run_id: int, agent: dict) -> None:
         inject_env = {**provider_env, **db_env, **search_keys, **(agent.get("env") or {})}
         full_env = {**os.environ, **inject_env}
 
+        # start listening for an OOM-kill before the container can trigger one
+        oom = {"hit": False}
+        oom_task = asyncio.create_task(_watch_oom(run_id, oom))
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 *_docker_cmd(run_id, agent["id"], inject_env),
@@ -471,6 +475,7 @@ async def execute_run(run_id: int, agent: dict) -> None:
                 limit=config.RUN_STREAM_LIMIT,  # one JSON event per line can be large
             )
         except FileNotFoundError:
+            oom_task.cancel()
             await handle({"type": "error", "message": "docker not found on PATH"})
             await db.finish_run(run_id, status="failed", error="docker not found")
             _publish(run_id, {"type": "status", "status": "failed"})
@@ -525,14 +530,30 @@ async def execute_run(run_id: int, agent: dict) -> None:
             await _kill_container(run_id, proc)
             exit_code = 1
 
+        # let the OOM watcher flush its event before we read the flag, then stop it
+        if exit_code not in (0, None):
+            await asyncio.sleep(0.3)
+        oom_task.cancel()
+        try:
+            await oom_task
+        except Exception:
+            pass
+
         if error is None and exit_code not in (0, None):
-            stderr = b""
-            if proc.stderr is not None:
-                try:
-                    stderr = await proc.stderr.read()
-                except Exception:
-                    pass
-            error = stderr.decode(errors="replace").strip()[-2000:] or f"exit {exit_code}"
+            if oom["hit"]:
+                # confirmed by the Docker oom event — a precise, groupable failure class
+                error = (f"out of memory — the run exceeded its {config.TASK_MEMORY} "
+                         f"container memory limit and was killed")
+            else:
+                stderr = b""
+                if proc.stderr is not None:
+                    try:
+                        stderr = await proc.stderr.read()
+                    except Exception:
+                        pass
+                error = stderr.decode(errors="replace").strip()[-2000:] or f"exit {exit_code}"
+                if exit_code == 137:   # SIGKILL under a mem cap: almost always OOM (flag unseen)
+                    error = f"{error} (likely out of memory — exceeded {config.TASK_MEMORY})"
 
         status = "succeeded" if (exit_code == 0 and not error) else "failed"
         await db.finish_run(
@@ -548,6 +569,37 @@ async def execute_run(run_id: int, agent: dict) -> None:
             await alerts.evaluate_run(run_id)
         except Exception:
             pass
+
+
+async def _watch_oom(run_id: int, flag: dict) -> None:
+    """Listen for the Docker `oom` event for this run's container and set
+    flag['hit']=True if the kernel OOM-kills it (hit the --memory cgroup cap).
+
+    Why live, not retrospective: on cgroup v2 the daemon emits the `oom` event in
+    real time but does NOT retain it in the `docker events --since` backlog, so a
+    query after the run finishes misses it. We watch for the container's lifetime
+    instead. The event filter accepts the name before the container exists, so
+    starting this just before `docker run` guarantees we're listening in time."""
+    name = f"superagent-run-{run_id}"
+    proc = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "events", "--filter", f"container={name}",
+            "--filter", "event=oom", "--format", "{{.Actor.Attributes.name}}",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+        assert proc.stdout is not None
+        async for raw in proc.stdout:
+            if name in raw.decode(errors="ignore"):
+                flag["hit"] = True
+    except (asyncio.CancelledError, Exception):
+        pass
+    finally:
+        if proc is not None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
 
 async def _kill_container(run_id: int, proc) -> None:
