@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Antonagents · self-hosted agent infrastructure</title>
-<meta name="description" content="Dispatch a task; an agent carries it out end to end in its own isolated container, streaming progress back live. Self-hosted, multi-user, multi-provider."/>
+<title>Antonagents · self-hostable AI agent platform</title>
+<meta name="description" content="AI agents that do your team's work — connected to the tools and data you already run on, put on a schedule, and fully auditable. Self-hostable on your own infrastructure, so sensitive data never leaves."/>
 <script>
   (function(){ try{ var t=localStorage.getItem('sa-theme'); if(t) document.documentElement.setAttribute('data-theme',t); }catch(e){} })();
 </script>
@@ -404,8 +404,8 @@
         <p>Self-hostable end to end. Each run executes in its own isolated container on hardware you control, so your data never leaves your walls.</p></div>
       <div class="cap third"><span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><h3>Multi-tenant by design</h3>
         <p>Each team's agents, connections, and data are isolated, safe to roll out across a whole org.</p></div>
-      <div class="cap third"><span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></span><h3>Proven impact</h3>
-        <p>Every run tracks the hours and cost it gives back, rolled up per agent and across your workspace.</p></div>
+      <div class="cap third"><span class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></span><h3>Impact &amp; oversight</h3>
+        <p>A full audit of what every agent did, with success rate, run time, and the hours and cost it gives back — rolled up per agent and across your workspace. A fleet you can actually govern.</p></div>
     </div>
   </div>
 </section>
@@ -584,7 +584,7 @@ function renderUC(){
 
 // connector logo wall (icons served by Composio's logo CDN; graceful fallback if a slug has none)
 const CONNECTORS = [
-  ['gmail','Gmail'],['slack','Slack'],['discord','Discord'],['intercom','Intercom'],
+  ['gmail','Gmail'],['outlook','Outlook'],['slack','Slack'],['discord','Discord'],['intercom','Intercom'],
   ['notion','Notion'],['googledrive','Google Drive'],['googlesheets','Google Sheets'],['airtable','Airtable'],
   ['dropbox','Dropbox'],['box','Box'],['googlecalendar','Google Calendar'],['calendly','Calendly'],
   ['linear','Linear'],['jira','Jira'],['asana','Asana'],['trello','Trello'],['clickup','ClickUp'],
