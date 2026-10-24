@@ -1,6 +1,9 @@
 # Feature: Outcome Jobs (delegate the job, get the outcome)
 
-> Status: **spec / backlog** (captured 2026-10-25). Not yet implemented.
+> Status: **step 1 implemented** (2026-10-25) — job specs, outcomes, independent
+> `sql` + `artifact` verification, receipts, console outcome card. Piloted on
+> agent 60 (Daily pricing pipeline). Steps 2–6 not started. `connector` checks
+> are deferred to a later step (the pilot doesn't need them).
 > Positioning decision behind it: see `positioning` memory — "outcome-based, not
 > ask-and-it-does".
 

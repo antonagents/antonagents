@@ -13,7 +13,7 @@ import shlex
 from typing import Optional
 from urllib.parse import unquote, urlparse
 
-from . import alerts, config, connectors, db, providers, router
+from . import alerts, config, connectors, db, outcomes, providers, router
 
 # bounded concurrency across all runs
 _sem: Optional[asyncio.Semaphore] = None
@@ -331,6 +331,15 @@ async def execute_run(run_id: int, agent: dict) -> None:
     resume = agent.get("last_session_id") if (run and run.get("resume")) else None
     mcp_servers = None
 
+    # outcome jobs: a routine with a published job spec turns this run into an
+    # attempt toward an outcome, and the agent is told the definition of done
+    try:
+        addendum = await outcomes.begin_attempt(run_id, agent, run or {})
+        if addendum:
+            prompt = f"{prompt}\n\n{addendum}"
+    except Exception:  # noqa: BLE001 - never let the outcome layer block a run
+        outcomes.log.exception("could not start an outcome for run %s", run_id)
+
     async def handle(event: dict) -> None:
         nonlocal seq, result_text, cost_usd, error
         seq += 1
@@ -569,6 +578,9 @@ async def execute_run(run_id: int, agent: dict) -> None:
             await alerts.evaluate_run(run_id)
         except Exception:
             pass
+
+        # outcome jobs: verify the outcome independently, off the run slot
+        asyncio.create_task(outcomes.finish_attempt(run_id))
 
 
 async def _watch_oom(run_id: int, flag: dict) -> None:

@@ -44,13 +44,14 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import auth, config, connectors, db, providers, ratelimit, runner, scheduler, templates
+from . import (auth, config, connectors, db, outcomes, providers, ratelimit, runner,
+               scheduler, templates, verify)
 from .auth import current_user
 from .connectors import db_driver
 from .models import (AgentAlertsIn, AgentConnectorsIn, AgentCreate, AgentModelIn, AgentNameIn,
                      AgentDbConnectionsIn, AgentScheduleIn, AgentSkillsIn, ApiKeyIn,
                      DbConnectionIn, DbConnectionTestIn, DbConnectionUpdateIn,
-                     InvitationIn, LoginIn, MemberRoleIn, SignupInviteIn,
+                     InvitationIn, JobSpecIn, LoginIn, MemberRoleIn, SignupInviteIn,
                      NotificationsReadIn, OrgSwitchIn, RegisterIn,
                      ReplyIn, SkillIn, V1ChatIn)
 
@@ -66,6 +67,8 @@ async def lifespan(app: FastAPI):
     await db.init()
     runner.init()
     await scheduler.start()
+    # outcome jobs: verify any outcome a restart left mid-flight
+    asyncio.create_task(outcomes.resume_pending())
     if config.CONNECTORS_ENABLED:
         # The per-user MCP config injected into task containers currently carries
         # the org-wide connector key — a task with shell+network could exfiltrate
@@ -296,17 +299,30 @@ async def disconnect_connector(provider: str, user: dict = Depends(current_user)
 # ---------------- agents ----------------
 
 async def _agent_out(agent: dict) -> dict:
-    return _agent_out_row(agent, await db.last_run(agent["id"]))
+    lo = await db.last_outcomes_for([agent["id"]])
+    return _agent_out_row(agent, await db.last_run(agent["id"]), lo.get(agent["id"]))
 
 
 async def _agents_out(agents: list[dict]) -> list[dict]:
     """Bulk version of _agent_out — one query for all last-runs (no N+1)."""
-    lasts = await db.last_runs_for([a["id"] for a in agents])
-    return [_agent_out_row(a, lasts.get(a["id"])) for a in agents]
+    ids = [a["id"] for a in agents]
+    lasts = await db.last_runs_for(ids)
+    louts = await db.last_outcomes_for(ids)
+    return [_agent_out_row(a, lasts.get(a["id"]), louts.get(a["id"])) for a in agents]
 
 
-def _agent_out_row(agent: dict, last: dict | None) -> dict:
+def _outcome_brief(o: dict | None) -> dict | None:
+    """The small slice of an outcome a list badge needs."""
+    if not o:
+        return None
+    r = o.get("receipt") or {}
+    return {"id": o["id"], "status": o["status"], "headline": r.get("headline"),
+            "strength": r.get("strength"), "verified_at": o.get("verified_at")}
+
+
+def _agent_out_row(agent: dict, last: dict | None, last_outcome: dict | None = None) -> dict:
     return {
+        "last_outcome": _outcome_brief(last_outcome),
         "id": agent["id"],
         "public_id": agent.get("public_id"),
         "name": agent["name"],
@@ -493,6 +509,8 @@ async def get_agent(agent_id: int, user: dict = Depends(current_user)):
     ]
     out["baseline_minutes"] = agent.get("baseline_minutes")
     out["timeout_secs"] = agent.get("timeout_secs")
+    out["spec"] = await db.get_latest_spec(agent_id)
+    out["outcomes"] = await db.list_outcomes(agent_id, limit=10)
     out["impact"] = _with_cost(await db.agent_impact(agent_id, agent.get("baseline_minutes")))
     out["alerts"] = await db.get_agent_alerts(agent_id)
     return out
@@ -1069,6 +1087,116 @@ async def mark_read(body: NotificationsReadIn, user: dict = Depends(current_user
     org_id = _org_id(user)
     await db.mark_notifications_read(org_id, body.ids)
     return {"unread": await db.unread_count(org_id)}
+
+
+# ---------------- outcome jobs (docs/features/outcome-jobs.md) ----------------
+
+_ARTIFACT_KEYS = {"path", "non_empty", "modified_since_start", "contains",
+                  "last_line_matches", "line_regex", "ts_after_start"}
+
+
+async def _validate_checks(checks, org_id: int) -> list[dict]:
+    """Validate + normalize checks. Every check must be runnable read-only."""
+    out = []
+    for c in checks:
+        cfg = dict(c.config or {})
+        label = f"check '{c.name}'"
+        if c.kind == "sql":
+            err = verify.validate_select(cfg.get("query", ""))
+            if err:
+                raise HTTPException(400, f"{label}: {err}")
+            expect = (cfg.get("expect") or "nonempty").strip()
+            if not verify.parse_expect(expect):
+                raise HTTPException(400, f"{label}: unsupported expect '{expect}' "
+                                         "(use e.g. '>= 100', 'between 1 and 9', 'nonempty')")
+            try:
+                cid = int(cfg.get("connection_id") or 0)
+            except (TypeError, ValueError):
+                cid = 0
+            conn = await db.get_db_connection(cid, org_id)
+            if not conn:
+                raise HTTPException(400, f"{label}: data source not found in this workspace")
+            if conn["engine"] != "postgres":
+                raise HTTPException(400, f"{label}: only Postgres data sources can be checked for now")
+            cfg = {"connection_id": cid, "query": cfg["query"].strip(), "expect": expect}
+        else:  # artifact
+            if not verify.safe_rel_path(cfg.get("path", "")):
+                raise HTTPException(400, f"{label}: path must be relative to the workspace")
+            for k in ("line_regex", "last_line_matches"):
+                if cfg.get(k):
+                    try:
+                        re.compile(cfg[k])
+                    except re.error as e:
+                        raise HTTPException(400, f"{label}: invalid {k}: {e}")
+            cfg = {k: v for k, v in cfg.items() if k in _ARTIFACT_KEYS}
+        out.append({"kind": c.kind, "name": c.name.strip(), "config": cfg,
+                    "required": c.required, "strength": "verified"})
+    return out
+
+
+@app.get("/api/agents/{agent_id}/spec")
+async def get_job_spec(agent_id: int, user: dict = Depends(current_user)):
+    await _owned_agent_or_404(agent_id, user)
+    return {"spec": await db.get_latest_spec(agent_id)}
+
+
+@app.put("/api/agents/{agent_id}/spec")
+async def put_job_spec(agent_id: int, body: JobSpecIn, user: dict = Depends(current_user)):
+    """Save a new version of a routine's definition of done (optionally publish it)."""
+    agent = await _owned_agent_or_404(agent_id, user)
+    if (agent.get("kind") or "routine") == "chat":
+        raise HTTPException(400, "job specs apply to routines, not chats")
+    checks = await _validate_checks(body.checks, _org_id(user))
+    spec_id = await db.create_job_spec(
+        agent_id, objective=body.objective.strip(), checks=checks,
+        deliver_to=body.deliver_to, constraints=body.constraints, budget=body.budget,
+        created_by=user["id"], publish=body.publish)
+    return {"spec": await db.get_spec(spec_id)}
+
+
+@app.get("/api/agents/{agent_id}/outcomes")
+async def list_agent_outcomes(agent_id: int, limit: int = Query(30, ge=1, le=200),
+                              user: dict = Depends(current_user)):
+    await _owned_agent_or_404(agent_id, user)
+    return await db.list_outcomes(agent_id, limit)
+
+
+async def _owned_outcome_or_404(outcome_id: int, user: dict) -> dict:
+    o = await db.get_outcome(outcome_id)
+    if not o or o["org_id"] != _org_id(user):
+        raise HTTPException(404, "outcome not found")
+    return o
+
+
+@app.get("/api/outcomes/{outcome_id}")
+async def get_outcome_detail(outcome_id: int, user: dict = Depends(current_user)):
+    return await _owned_outcome_or_404(outcome_id, user)
+
+
+@app.post("/api/outcomes/{outcome_id}/verify")
+async def reverify_outcome(outcome_id: int, user: dict = Depends(current_user)):
+    """Re-run an outcome's checks now (e.g. after fixing the data by hand)."""
+    o = await _owned_outcome_or_404(outcome_id, user)
+    if o["status"] == "running":
+        raise HTTPException(409, "the outcome is still running")
+    return await outcomes.verify_outcome(outcome_id)
+
+
+@app.post("/api/agents/{agent_id}/outcomes/backfill")
+async def backfill_outcome(agent_id: int, run_id: int = Query(...),
+                           user: dict = Depends(current_user)):
+    """Create and verify an outcome for a run that finished before the spec existed."""
+    agent = await _owned_agent_or_404(agent_id, user)
+    run = await db.get_run(run_id)
+    if not run or run["agent_id"] != agent_id:
+        raise HTTPException(404, "run not found")
+    if run["status"] in ("queued", "running"):
+        raise HTTPException(409, "the run is still in progress")
+    try:
+        oid = await outcomes.backfill_from_run(run_id, agent)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return await db.get_outcome(oid)
 
 
 @app.post("/api/agents/{agent_id}/enable")

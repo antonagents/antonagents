@@ -143,3 +143,21 @@ class DbConnectionIn(BaseModel):
 
 class AgentDbConnectionsIn(BaseModel):
     db_connection_ids: list[int] = Field(default_factory=list)
+
+
+# ---------------- outcome jobs (docs/features/outcome-jobs.md) ----------------
+
+class JobCheckIn(BaseModel):
+    kind: Literal["sql", "artifact"]
+    name: str = Field(..., min_length=1, max_length=200)
+    config: dict = Field(default_factory=dict)
+    required: bool = True
+
+
+class JobSpecIn(BaseModel):
+    objective: str = Field(..., min_length=1, max_length=2000)
+    checks: list[JobCheckIn] = Field(..., min_length=1, max_length=20)
+    deliver_to: Optional[list] = None
+    constraints: Optional[list] = None
+    budget: Optional[dict] = None
+    publish: bool = False

@@ -219,6 +219,77 @@ CREATE TABLE IF NOT EXISTS api_keys (
     revoked      INTEGER NOT NULL DEFAULT 0
 );
 
+-- Outcome jobs (docs/features/outcome-jobs.md). A job spec is the definition of
+-- done attached to a routine; an outcome is one occurrence of the job, verified
+-- independently of the agent. An agent with no published spec behaves as before.
+CREATE TABLE IF NOT EXISTS job_specs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id        INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    version         INTEGER NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'draft',   -- draft | published | archived
+    objective       TEXT NOT NULL DEFAULT '',
+    deliver_to_json TEXT,
+    constraints_json TEXT,
+    budget_json     TEXT,
+    created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at      TEXT NOT NULL,
+    UNIQUE(agent_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS job_checks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    spec_id     INTEGER NOT NULL REFERENCES job_specs(id) ON DELETE CASCADE,
+    position    INTEGER NOT NULL DEFAULT 0,
+    kind        TEXT NOT NULL,                       -- sql | artifact (v1)
+    name        TEXT NOT NULL,
+    config_json TEXT NOT NULL DEFAULT '{}',
+    strength    TEXT NOT NULL DEFAULT 'verified',    -- verified | judged | accepted
+    required    INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS outcomes (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id         INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    org_id           INTEGER NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+    spec_id          INTEGER REFERENCES job_specs(id) ON DELETE SET NULL,
+    spec_version     INTEGER,
+    trigger          TEXT,                           -- run | backfill
+    status           TEXT NOT NULL DEFAULT 'running',-- running|verifying|delivered|failed
+    attempts         INTEGER NOT NULL DEFAULT 0,
+    started_at       TEXT,
+    finished_at      TEXT,
+    verified_at      TEXT,
+    manifest_json    TEXT,
+    receipt_json     TEXT,
+    cost_usd         REAL,
+    needs_you_reason TEXT,
+    created_at       TEXT NOT NULL
+);
+
+-- check results snapshot the check's name/kind/strength so a receipt survives
+-- later edits to the spec
+CREATE TABLE IF NOT EXISTS check_results (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    outcome_id INTEGER NOT NULL REFERENCES outcomes(id) ON DELETE CASCADE,
+    check_id   INTEGER REFERENCES job_checks(id) ON DELETE SET NULL,
+    attempt    INTEGER NOT NULL DEFAULT 1,
+    name       TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    strength   TEXT NOT NULL,
+    required   INTEGER NOT NULL DEFAULT 1,
+    passed     INTEGER NOT NULL,
+    observed   TEXT,
+    expected   TEXT,
+    detail     TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_specs_agent ON job_specs(agent_id, status);
+CREATE INDEX IF NOT EXISTS idx_job_checks_spec ON job_checks(spec_id, position);
+CREATE INDEX IF NOT EXISTS idx_outcomes_agent ON outcomes(agent_id, id);
+CREATE INDEX IF NOT EXISTS idx_outcomes_status ON outcomes(status);
+CREATE INDEX IF NOT EXISTS idx_check_results_outcome ON check_results(outcome_id, attempt);
+
 CREATE INDEX IF NOT EXISTS idx_events_run ON events(run_id, seq);
 CREATE INDEX IF NOT EXISTS idx_connections_user ON connections(user_id);
 CREATE INDEX IF NOT EXISTS idx_agents_org ON agents(org_id);
@@ -230,7 +301,10 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_agent ON api_keys(agent_id);
 
 # Indexes on columns that may not exist until _migrate() runs (an old `runs`
 # table lacks agent_id). Created after migration.
-POST_MIGRATE_INDEXES = "CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);"
+POST_MIGRATE_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
+CREATE INDEX IF NOT EXISTS idx_runs_outcome ON runs(outcome_id);
+"""
 
 
 async def _cols(table: str) -> set:
@@ -255,6 +329,9 @@ async def init() -> None:
     await _migrate()
     await _ensure_column("agents", "baseline_minutes", "INTEGER")
     await _ensure_column("agents", "timeout_secs", "INTEGER")
+    # outcome jobs: a run is an attempt toward an outcome
+    await _ensure_column("runs", "outcome_id", "INTEGER")
+    await _ensure_column("runs", "attempt", "INTEGER")
     await _ensure_column("agents", "kind", "TEXT NOT NULL DEFAULT 'routine'")
     # stable, unguessable public id for the API surface (/v1/agents/<public_id>)
     await _ensure_column("agents", "public_id", "TEXT")
@@ -1408,3 +1485,184 @@ async def delete_connection(user_id: int, provider: str) -> None:
         "DELETE FROM connections WHERE user_id=? AND provider=?", (user_id, provider)
     )
     await _db.commit()
+
+
+# ---------------- outcome jobs (docs/features/outcome-jobs.md) ----------------
+
+def _j(v) -> Optional[str]:
+    return json.dumps(v) if v is not None else None
+
+
+def _unj(v):
+    try:
+        return json.loads(v) if v else None
+    except (TypeError, ValueError):
+        return None
+
+
+async def create_job_spec(agent_id: int, *, objective: str, checks: list[dict],
+                          deliver_to=None, constraints=None, budget=None,
+                          created_by: Optional[int] = None, publish: bool = False) -> int:
+    """Save a new spec version for an agent. Publishing archives the previous
+    published version, so an agent has at most one live definition of done."""
+    cur = await _db.execute(
+        "SELECT coalesce(max(version),0)+1 FROM job_specs WHERE agent_id=?", (agent_id,))
+    version = (await cur.fetchone())[0]
+    if publish:
+        await _db.execute(
+            "UPDATE job_specs SET status='archived' WHERE agent_id=? AND status='published'",
+            (agent_id,))
+    cur = await _db.execute(
+        """INSERT INTO job_specs (agent_id, version, status, objective, deliver_to_json,
+               constraints_json, budget_json, created_by, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (agent_id, version, "published" if publish else "draft", objective,
+         _j(deliver_to), _j(constraints), _j(budget), created_by, _now()))
+    spec_id = cur.lastrowid
+    for i, ch in enumerate(checks):
+        await _db.execute(
+            """INSERT INTO job_checks (spec_id, position, kind, name, config_json, strength, required)
+               VALUES (?,?,?,?,?,?,?)""",
+            (spec_id, i, ch["kind"], ch["name"], json.dumps(ch.get("config") or {}),
+             ch.get("strength") or "verified", 1 if ch.get("required", True) else 0))
+    await _db.commit()
+    return spec_id
+
+
+async def _spec_with_checks(row) -> Optional[dict]:
+    if not row:
+        return None
+    s = dict(row)
+    for k in ("deliver_to", "constraints", "budget"):
+        s[k] = _unj(s.pop(f"{k}_json", None))
+    cur = await _db.execute(
+        "SELECT * FROM job_checks WHERE spec_id=? ORDER BY position", (s["id"],))
+    s["checks"] = []
+    for c in await cur.fetchall():
+        c = dict(c)
+        c["config"] = _unj(c.pop("config_json")) or {}
+        c["required"] = bool(c["required"])
+        s["checks"].append(c)
+    return s
+
+
+async def get_published_spec(agent_id: int) -> Optional[dict]:
+    cur = await _db.execute(
+        "SELECT * FROM job_specs WHERE agent_id=? AND status='published' ORDER BY version DESC LIMIT 1",
+        (agent_id,))
+    return await _spec_with_checks(await cur.fetchone())
+
+
+async def get_spec(spec_id: int) -> Optional[dict]:
+    cur = await _db.execute("SELECT * FROM job_specs WHERE id=?", (spec_id,))
+    return await _spec_with_checks(await cur.fetchone())
+
+
+async def get_latest_spec(agent_id: int) -> Optional[dict]:
+    """The published spec if there is one, else the newest draft."""
+    return (await get_published_spec(agent_id)) or await _spec_with_checks(await (await _db.execute(
+        "SELECT * FROM job_specs WHERE agent_id=? ORDER BY version DESC LIMIT 1",
+        (agent_id,))).fetchone())
+
+
+async def create_outcome(agent_id: int, org_id: int, spec: dict, *, trigger: str,
+                         started_at: Optional[str] = None) -> int:
+    cur = await _db.execute(
+        """INSERT INTO outcomes (agent_id, org_id, spec_id, spec_version, trigger, status,
+               attempts, started_at, created_at)
+           VALUES (?,?,?,?,?,'running',0,?,?)""",
+        (agent_id, org_id, spec["id"], spec["version"], trigger, started_at or _now(), _now()))
+    await _db.commit()
+    return cur.lastrowid
+
+
+async def link_run_to_outcome(run_id: int, outcome_id: int) -> int:
+    """Attach a run as the next attempt of an outcome; returns the attempt number."""
+    cur = await _db.execute("SELECT attempts FROM outcomes WHERE id=?", (outcome_id,))
+    attempt = ((await cur.fetchone())[0] or 0) + 1
+    await _db.execute("UPDATE runs SET outcome_id=?, attempt=? WHERE id=?",
+                      (outcome_id, attempt, run_id))
+    await _db.execute("UPDATE outcomes SET attempts=? WHERE id=?", (attempt, outcome_id))
+    await _db.commit()
+    return attempt
+
+
+_OUTCOME_FIELDS = {"status", "finished_at", "verified_at", "manifest_json", "receipt_json",
+                   "cost_usd", "needs_you_reason"}
+
+
+async def update_outcome(outcome_id: int, **fields) -> None:
+    sets, vals = [], []
+    for k, v in fields.items():
+        if k not in _OUTCOME_FIELDS:
+            raise ValueError(f"not an outcome field: {k}")
+        sets.append(f"{k}=?"); vals.append(v)
+    if not sets:
+        return
+    vals.append(outcome_id)
+    await _db.execute(f"UPDATE outcomes SET {', '.join(sets)} WHERE id=?", vals)
+    await _db.commit()
+
+
+async def replace_check_results(outcome_id: int, attempt: int, results: list[dict]) -> None:
+    """Store an attempt's check results (re-verifying an attempt replaces them)."""
+    await _db.execute("DELETE FROM check_results WHERE outcome_id=? AND attempt=?",
+                      (outcome_id, attempt))
+    for r in results:
+        await _db.execute(
+            """INSERT INTO check_results (outcome_id, check_id, attempt, name, kind, strength,
+                   required, passed, observed, expected, detail, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (outcome_id, r.get("check_id"), attempt, r["name"], r["kind"], r["strength"],
+             1 if r["required"] else 0, 1 if r["passed"] else 0,
+             r.get("observed"), r.get("expected"), r.get("detail"), _now()))
+    await _db.commit()
+
+
+def _outcome_row(r) -> dict:
+    d = dict(r)
+    d["manifest"] = _unj(d.pop("manifest_json", None))
+    d["receipt"] = _unj(d.pop("receipt_json", None))
+    return d
+
+
+async def get_outcome(outcome_id: int) -> Optional[dict]:
+    cur = await _db.execute("SELECT * FROM outcomes WHERE id=?", (outcome_id,))
+    row = await cur.fetchone()
+    if not row:
+        return None
+    o = _outcome_row(row)
+    cur = await _db.execute(
+        "SELECT * FROM check_results WHERE outcome_id=? ORDER BY attempt, id", (outcome_id,))
+    o["check_results"] = [{**dict(c), "passed": bool(c["passed"]), "required": bool(c["required"])}
+                          for c in await cur.fetchall()]
+    cur = await _db.execute(
+        """SELECT id, attempt, status, exit_code, started_at, finished_at, cost_usd, error
+           FROM runs WHERE outcome_id=? ORDER BY attempt""", (outcome_id,))
+    o["runs"] = [dict(x) for x in await cur.fetchall()]
+    return o
+
+
+async def list_outcomes(agent_id: int, limit: int = 30) -> list[dict]:
+    cur = await _db.execute(
+        "SELECT * FROM outcomes WHERE agent_id=? ORDER BY id DESC LIMIT ?", (agent_id, limit))
+    return [_outcome_row(r) for r in await cur.fetchall()]
+
+
+async def last_outcomes_for(agent_ids: list[int]) -> dict:
+    """agent_id -> its newest outcome (bulk, for list badges)."""
+    if not agent_ids:
+        return {}
+    q = ",".join("?" * len(agent_ids))
+    cur = await _db.execute(
+        f"""SELECT o.* FROM outcomes o
+            JOIN (SELECT agent_id, max(id) mid FROM outcomes WHERE agent_id IN ({q})
+                  GROUP BY agent_id) m ON m.mid = o.id""", agent_ids)
+    return {r["agent_id"]: _outcome_row(r) for r in await cur.fetchall()}
+
+
+async def pending_outcomes() -> list[dict]:
+    """Outcomes left mid-flight (e.g. by a restart) — re-verified at boot."""
+    cur = await _db.execute(
+        "SELECT * FROM outcomes WHERE status IN ('running','verifying') ORDER BY id")
+    return [_outcome_row(r) for r in await cur.fetchall()]

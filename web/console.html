@@ -493,6 +493,37 @@
   .b-running,.b-queued{ color:var(--warn); border-color:color-mix(in oklab,var(--warn) 45%,transparent); background:var(--warn-soft); }
   .b-running::before,.b-queued::before{ animation:pulse 1.4s var(--ease) infinite; }
 
+  /* outcome jobs: the latest verified outcome of a routine */
+  .outcome-card{ margin-top:var(--sp-3); background:var(--surface); border:1px solid var(--line);
+    border-left:3px solid var(--line-strong); border-radius:var(--r-md); padding:12px 14px;
+    display:flex; flex-direction:column; gap:9px; }
+  .outcome-card.oc-succeeded{ border-left-color:var(--ok); }
+  .outcome-card.oc-failed{ border-left-color:var(--err); }
+  .outcome-card.oc-running{ border-left-color:var(--warn); }
+  .oc-head{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .oc-sum{ font-size:var(--fs-sm); color:var(--fg); }
+  .oc-again{ margin-left:auto; font-size:var(--fs-xs); }
+  .oc-note{ font-size:var(--fs-xs); color:var(--warn); }
+  .oc-checks{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:5px; }
+  .oc-checks li{ display:grid; grid-template-columns:16px minmax(0,1fr); column-gap:6px;
+    font-size:var(--fs-sm); line-height:1.4; }
+  .oc-mark{ font-weight:700; }
+  .oc-checks li.pass .oc-mark{ color:var(--ok); }
+  .oc-checks li.fail .oc-mark{ color:var(--err); }
+  .oc-name{ color:var(--fg); }
+  .oc-ev{ grid-column:2; font-family:var(--font-mono); font-size:var(--fs-xs); color:var(--fg-2);
+    font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+  .oc-exp{ color:var(--muted); }
+  .oc-foot{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:var(--fs-xs); color:var(--muted); }
+  .oc-hist{ margin-left:auto; display:inline-flex; align-items:center; gap:4px; }
+  .oc-dot{ width:8px; height:8px; border-radius:50%; display:inline-block; border:0; padding:0; }
+  .oc-dot.b-succeeded{ background:var(--ok); } .oc-dot.b-failed{ background:var(--err); }
+  .oc-dot.b-running{ background:var(--warn); } .oc-dot.b-none{ background:var(--line-strong); }
+  .oc-dot::before{ display:none; }
+  .oc-obj{ font-size:var(--fs-xs); color:var(--fg-2); border-top:1px solid var(--line); padding-top:8px; }
+  .oc-k{ font-family:var(--font-mono); text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-right:6px; }
+  .oc-v{ color:var(--muted); margin-left:6px; }
+
   /* ---- run / telemetry pane ---- */
   #runmeta{ display:flex; flex-direction:column; gap:var(--sp-3); }
   #runmeta .rtitle{ font-family:var(--font-sans); font-size:var(--fs-md); font-weight:600; letter-spacing:-.01em; }
@@ -1469,7 +1500,7 @@ async function loadTasks(){
   $('#tasks').innerHTML = tasks.map(t => `
     <div class="card" data-id="${t.id}">
       <div class="split"><span class="t">${esc(t.name)}</span>
-        <span class="badge b-${t.last_run?t.last_run.status:'none'}">${t.last_run?t.last_run.status:'no runs'}</span></div>
+        ${_taskBadge(t)}</div>
       <div class="m">${t.schedule_kind==='once'?'one-shot':t.schedule_kind+' · '+esc(t.schedule_expr||'')}
         ${t.next_run_at?'· next '+t.next_run_at:''}
         ${t.model?'· '+esc(t.model):(t.provider?'· '+esc(t.provider):'· auto')}</div>
@@ -1921,6 +1952,74 @@ function renderFiles(files, truncated){
   }).join('') + (truncated ? '<div class="hint" style="margin-top:8px">Showing the first 500 files.</div>' : '');
 }
 
+// ---- outcome jobs: verified outcomes instead of raw run status ----
+const _OC = {
+  delivered: {cls:'succeeded', label:'verified'},
+  failed:    {cls:'failed',    label:'not verified'},
+  verifying: {cls:'running',   label:'verifying'},
+  running:   {cls:'running',   label:'running'},
+};
+// list badge: a routine with a definition of done shows its latest OUTCOME
+function _taskBadge(t){
+  const o = t.last_outcome;
+  if (o && _OC[o.status]) return `<span class="badge b-${_OC[o.status].cls}" title="latest outcome">${_OC[o.status].label}</span>`;
+  const s = t.last_run ? t.last_run.status : 'none';
+  return `<span class="badge b-${s}">${t.last_run ? s : 'no runs'}</span>`;
+}
+function _ocTime(iso){
+  if (!iso) return '';
+  try { return new Date(iso).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}); }
+  catch(e){ return iso; }
+}
+function _ocVal(v){
+  if (v == null || v === '') return '—';
+  return /^-?\d+(\.\d+)?$/.test(String(v)) ? Number(v).toLocaleString() : String(v);
+}
+// detail card: the latest outcome's receipt + per-check evidence
+function outcomeCard(t){
+  const spec = t.spec;
+  if (!spec || spec.status !== 'published') return '';
+  const outs = t.outcomes || [];
+  const o = outs[0];
+  const obj = `<div class="oc-obj"><span class="oc-k">Definition of done</span> ${esc(spec.objective||'')}
+    <span class="oc-v">v${spec.version} · ${spec.checks.length} check${spec.checks.length===1?'':'s'}</span></div>`;
+  if (!o) return `<div class="outcome-card oc-none">${obj}
+    <div class="oc-sum">The next run will be verified against these checks.</div></div>`;
+  const st = _OC[o.status] || {cls:'none', label:o.status};
+  const r = o.receipt || {};
+  const checks = (r.checks || []).map(c => `<li class="${c.passed?'pass':'fail'}">
+      <span class="oc-mark">${c.passed?'✓':'✗'}</span>
+      <span class="oc-name">${esc(c.name)}</span>
+      <span class="oc-ev">${c.observed!=null?'observed '+esc(_ocVal(c.observed)):''}${c.expected?` <span class="oc-exp">· expected ${esc(c.expected)}</span>`:''}</span></li>`).join('');
+  const meta = [r.verified_at ? 'verified '+_ocTime(r.verified_at) : '',
+                r.run_id ? `run #${r.run_id}` : '',
+                r.runtime_s ? Math.round(r.runtime_s/60)+'m' : '',
+                r.cost_usd != null ? _usd(r.cost_usd) : ''].filter(Boolean).join(' · ');
+  const hist = outs.slice(0, 10).map(x => {
+    const s = _OC[x.status] || {cls:'none', label:x.status};
+    return `<span class="oc-dot b-${s.cls}" title="#${x.id} · ${esc(s.label)} · ${esc(_ocTime(x.started_at))}"></span>`;
+  }).join('');
+  const busy = o.status === 'running' || o.status === 'verifying';
+  return `<div class="outcome-card oc-${st.cls}">
+    <div class="oc-head">
+      <span class="badge b-${st.cls}">${esc(r.headline || st.label)}</span>
+      <span class="oc-sum">${esc(r.summary || (busy ? 'Waiting for the run to finish…' : ''))}</span>
+      ${busy ? '' : `<a href="#" class="oc-again" onclick="reverifyOutcome(${o.id});return false">verify again</a>`}
+    </div>
+    ${r.note ? `<div class="oc-note">${esc(r.note)}</div>` : ''}
+    ${checks ? `<ul class="oc-checks">${checks}</ul>` : ''}
+    <div class="oc-foot"><span>${esc(meta)}</span>${outs.length>1?`<span class="oc-hist">recent ${hist}</span>`:''}</div>
+    ${obj}
+  </div>`;
+}
+window.reverifyOutcome = async (oid) => {
+  try {
+    const o = await api('/api/outcomes/'+oid+'/verify', {method:'POST'});
+    toast(o.status==='delivered' ? 'Verified' : 'Verification failed', o.status==='delivered' ? 'ok' : 'err');
+  } catch(e){ toast(e.detail||e.message||'error','err'); }
+  if (CURRENT_TASK_ID) openTask(CURRENT_TASK_ID);
+};
+
 async function openTask(id){
   stopStream();                            // drop any chat's live stream before showing a routine
   if (typeof clearUploads === 'function') clearUploads();   // don't carry staged files in
@@ -1945,6 +2044,7 @@ async function openTask(id){
         <button class="ghost" onclick="openApiKeys(${id})">API</button>
         <button class="ghost" onclick="delTask(${id})">Delete</button></span>
     </div>
+    ${outcomeCard(t)}
     <details class="agent-details">
       <summary>Details &amp; settings</summary>
       <div class="prompt-echo">${esc(t.prompt)}</div>
