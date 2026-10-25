@@ -329,6 +329,10 @@ async def init() -> None:
     await _migrate()
     await _ensure_column("agents", "baseline_minutes", "INTEGER")
     await _ensure_column("agents", "timeout_secs", "INTEGER")
+    # data sources: what the login can actually do (app/db_access.py)
+    await _ensure_column("db_connections", "access_status", "TEXT")
+    await _ensure_column("db_connections", "access_detail", "TEXT")
+    await _ensure_column("db_connections", "access_checked_at", "TEXT")
     # outcome jobs: a run is an attempt toward an outcome
     await _ensure_column("runs", "outcome_id", "INTEGER")
     await _ensure_column("runs", "attempt", "INTEGER")
@@ -880,9 +884,31 @@ async def update_db_connection(conn_id: int, org_id: int, *, name: Optional[str]
 
 async def list_db_connections(org_id: int) -> list[dict]:
     cur = await _db.execute(
-        "SELECT id, org_id, owner_id, name, engine, mode, created_at FROM db_connections "
+        "SELECT id, org_id, owner_id, name, engine, mode, created_at, "
+        "access_status, access_detail, access_checked_at FROM db_connections "
         "WHERE org_id=? ORDER BY name", (org_id,),
     )
+    out = []
+    for r in await cur.fetchall():
+        d = dict(r)
+        try:
+            d["access"] = json.loads(d.pop("access_detail") or "null")
+        except ValueError:
+            d["access"] = None
+        out.append(d)
+    return out
+
+
+async def set_db_access(conn_id: int, status: str, detail_json: str) -> None:
+    await _db.execute(
+        "UPDATE db_connections SET access_status=?, access_detail=?, access_checked_at=? WHERE id=?",
+        (status, detail_json, _now(), conn_id))
+    await _db.commit()
+
+
+async def db_connections_unchecked() -> list[dict]:
+    """Full rows of data sources whose access has never been assessed."""
+    cur = await _db.execute("SELECT * FROM db_connections WHERE access_checked_at IS NULL")
     return [dict(r) for r in await cur.fetchall()]
 
 

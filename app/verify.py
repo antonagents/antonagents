@@ -95,7 +95,7 @@ def _parse_ts(s: str) -> Optional[datetime.datetime]:
 
 # ---------------- docker helper ----------------
 
-async def _docker(cmd: list[str], inject: dict, timeout: int = 60) -> tuple[int, str, str]:
+async def run_container(cmd: list[str], inject: dict, timeout: int = 60) -> tuple[int, str, str]:
     """Run a throwaway container; secrets travel via value-less -e, never argv."""
     full = list(cmd)
     env = {**os.environ, **inject}
@@ -140,7 +140,7 @@ async def _check_sql(cfg: dict, ctx: dict) -> dict:
     for k in inject:
         cmd += ["-e", k]
     cmd += [config.TASK_IMAGE, "-c", inner]
-    code, out, errtxt = await _docker(cmd, inject, timeout=60)
+    code, out, errtxt = await run_container(cmd, inject, timeout=60)
     if code != 0:
         return {**res, "passed": False,
                 "detail": f"query failed: {(errtxt or out).strip()[-300:]}"}
@@ -162,7 +162,7 @@ async def _check_artifact(cfg: dict, ctx: dict) -> dict:
     cmd = ["docker", "run", "--rm", "--network", "none", "--memory", "128m",
            "-v", f"{runner.agent_volume(ctx['agent_id'])}:/ws:ro", "-e", "P",
            "alpine", "sh", "-c", inner]
-    code, out, errtxt = await _docker(cmd, {"P": path}, timeout=30)
+    code, out, errtxt = await run_container(cmd, {"P": path}, timeout=30)
     if code != 0:
         return {"passed": False, "detail": f"could not read workspace: {errtxt.strip()[-200:]}"}
     lines = out.splitlines()

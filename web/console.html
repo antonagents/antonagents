@@ -423,6 +423,22 @@
     border-radius:var(--r-md); margin-bottom:var(--sp-2); }
   .ds-row .ds-name{ font-size:var(--fs-base); color:var(--fg); font-weight:500; }
   .ds-row .ds-meta{ font-family:var(--font-mono); font-size:var(--fs-xs); color:var(--muted); margin-left:var(--sp-2); }
+  .ds-acc{ font-family:var(--font-sans); font-size:var(--fs-xs); padding:3px 9px; border-radius:var(--r-pill);
+    border:1px solid var(--line); color:var(--fg-2); background:var(--surface-2); white-space:nowrap; }
+  .ds-acc-ok{ color:var(--ok); border-color:color-mix(in oklab,var(--ok) 40%,transparent); background:var(--ok-soft); }
+  .ds-acc-warn{ color:var(--warn); border-color:color-mix(in oklab,var(--warn) 45%,transparent); background:var(--warn-soft); }
+  .ds-acc-err{ color:var(--err); border-color:color-mix(in oklab,var(--err) 45%,transparent); background:var(--err-soft); }
+  .ds-risk{ margin:-2px 0 var(--sp-3); padding:10px 14px; border-radius:var(--r-md); font-size:var(--fs-sm);
+    line-height:1.5; color:var(--fg-2); border:1px solid var(--line); border-left:3px solid var(--warn); background:var(--surface); }
+  .ds-risk-err{ border-left-color:var(--err); }
+  .ds-risk b{ color:var(--fg); font-weight:600; }
+  .ds-fix{ margin-top:8px; }
+  .ds-fix summary{ cursor:pointer; color:var(--accent); font-size:var(--fs-sm); }
+  .ds-fix p{ margin:6px 0; font-size:var(--fs-xs); }
+  .ds-sql{ margin:0 0 8px; padding:10px 12px; background:var(--surface-2); border:1px solid var(--line);
+    border-radius:var(--r-sm); font-family:var(--font-mono); font-size:11.5px; line-height:1.55;
+    white-space:pre; overflow-x:auto; color:var(--fg); }
+  .hint.warn{ color:var(--warn); }
   .ds-row .ds-badge{ font-family:var(--font-mono); font-size:10px; letter-spacing:.04em;
     padding:2px 8px; border-radius:var(--r-pill); border:1px solid var(--line-strong); color:var(--fg-2); }
   .ds-row button{ padding:6px 12px; font-size:var(--fs-xs); }
@@ -1222,6 +1238,7 @@
           </div>
           <label>Connection string</label>
           <input id="dbDsn" placeholder="postgresql://user:pass@host:5432/dbname"/>
+          <div class="hint">Read-only is only guaranteed when the login itself can't write. We check the login's permissions when you test or save, and show you how to fix it if it can write.</div>
           <div class="actions">
             <button type="button" class="ghost" onclick="testDbForm()">Test</button>
             <button type="button" onclick="addDb()">Connect database</button>
@@ -2630,6 +2647,35 @@ async function loadDbs(){
     : '<span class="empty">No data sources yet — connect one via <b>Data sources</b> above.</span>';
   renderDataSources();
 }
+// ---- data sources: what the login can actually do (app/db_access.py) ----
+const _DS_TONE = {enforced:'ok', session_only:'warn', not_enforced:'err', unchecked:'warn',
+                  write_access:'neutral', error:'neutral'};
+function _dsAccessChip(d){
+  const a = d.access || {};
+  const label = a.label || (d.mode === 'read_only' ? 'Read-only · checking…' : 'Read & write');
+  const tone = _DS_TONE[d.access_status] || 'neutral';
+  return `<span class="ds-acc ds-acc-${tone}" title="${esc(a.message || '')}">${esc(label)}</span>`;
+}
+// read-only that isn't guaranteed: say so plainly, and hand over the fix
+function _dsRisk(d){
+  const a = d.access || {};
+  if (d.mode !== 'read_only') return '';
+  if (d.access_status === 'unchecked') return `<div class="ds-risk ds-risk-warn">${esc(a.message || '')}</div>`;
+  if (!['session_only','not_enforced'].includes(d.access_status)) return '';
+  const sql = d.fix_sql ? `<details class="ds-fix"><summary>Make it truly read-only</summary>
+      <p>Create a login that can only read, then update this data source to use it.</p>
+      <pre class="ds-sql" id="dssql-${d.id}">${esc(d.fix_sql)}</pre>
+      <button class="ghost" onclick="copyDsSql(${d.id})">Copy SQL</button></details>` : '';
+  return `<div class="ds-risk ds-risk-${_DS_TONE[d.access_status]}">
+      <b>Agents can write to this database.</b> ${esc(a.message || '')}${sql}</div>`;
+}
+window.copyDsSql = async (id) => {
+  const el = $('#dssql-'+id); if (!el) return;
+  try { await navigator.clipboard.writeText(el.textContent); toast('SQL copied','ok'); }
+  catch(e){ const r = document.createRange(); r.selectNodeContents(el);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); toast('Select and copy the SQL','ok'); }
+};
+
 function renderDataSources(){
   const el = $('#dataList'); if (!el) return;
   el.innerHTML = DBS.length
@@ -2637,11 +2683,12 @@ function renderDataSources(){
         <span><span class="ds-name">${esc(d.name)}</span><span class="ds-meta">${esc(d.engine)}</span></span>
         <span style="display:flex;align-items:center;gap:var(--sp-3)">
           <span class="hint" id="dstest-${d.id}"></span>
-          <span class="ds-badge">${esc(d.mode.replace('_','-'))}</span>
+          ${_dsAccessChip(d)}
           <button class="ghost" onclick="testDb(${d.id})">Test</button>
           <button class="ghost" onclick="toggleDbEdit(${d.id})">Update</button>
           <button class="ghost" onclick="deleteDb(${d.id})">Remove</button></span>
       </div>
+      ${_dsRisk(d)}
       <div class="ds-testbox" id="dstestbox-${d.id}" style="display:none"></div>
       <div class="ds-edit" id="dsedit-${d.id}" style="display:none">
         <input id="dsdsn-${d.id}" placeholder="new connection string (leave blank to keep current)"/>
@@ -2679,7 +2726,10 @@ window.testDb = async id => {
     box.textContent = dedupeErr(msg) || 'connection failed'; box.style.display = 'block'; };
   try {
     const r = await api('/api/db-connections/'+id+'/test', {method:'POST'});
-    if (r.ok){ chip.textContent = '✓ connected'; chip.className = 'hint ok'; box.style.display = 'none'; }
+    if (r.ok){
+      await loadDbs();                                   // re-render with the fresh access check
+      const c2 = $('#dstest-'+id); if (c2){ c2.textContent = '✓ connected'; c2.className = 'hint ok'; }
+    }
     else fail(r.message || 'connection failed');
   } catch(e){ fail(e.detail || e.message || 'error'); }
 };
@@ -2699,8 +2749,11 @@ window.testDbForm = async () => {
   m.textContent = 'testing…'; m.className = 'hint';
   try { const r = await api('/api/db-connections/test', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body)});
     const em = dedupeErr(r.message||'failed');
-    m.textContent = r.ok ? '✓ connected' : ('✗ ' + em); m.title = r.ok ? '' : em;
-    m.className = 'hint ' + (r.ok?'ok':'err');
+    const acc = r.access, risky = acc && ['session_only','not_enforced'].includes(acc.status);
+    m.textContent = r.ok ? ('✓ connected' + (acc ? ' · ' + acc.label : '')) : ('✗ ' + em);
+    m.title = r.ok ? ((acc && acc.message) || '') : em;
+    m.className = 'hint ' + (!r.ok ? 'err' : risky ? 'warn' : 'ok');
+    if (r.ok && risky) toast(acc.message, 'err');
   } catch(e){ const em = dedupeErr(e.detail||e.message||'error'); m.textContent = '✗ ' + em; m.title = em; m.className = 'hint err'; }
 };
 async function loadDbEngines(){

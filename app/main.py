@@ -44,7 +44,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import (auth, config, connectors, db, outcomes, providers, ratelimit, runner,
+from . import (auth, config, connectors, db, db_access, outcomes, providers, ratelimit, runner,
                scheduler, templates, verify)
 from .auth import current_user
 from .connectors import db_driver
@@ -69,6 +69,8 @@ async def lifespan(app: FastAPI):
     await scheduler.start()
     # outcome jobs: verify any outcome a restart left mid-flight
     asyncio.create_task(outcomes.resume_pending())
+    # data sources: measure what each login can really do (once, for older rows)
+    asyncio.create_task(_assess_unchecked())
     if config.CONNECTORS_ENABLED:
         # The per-user MCP config injected into task containers currently carries
         # the org-wide connector key — a task with shell+network could exfiltrate
@@ -569,9 +571,40 @@ async def db_engines(user: dict = Depends(current_user)):
     return db_driver.engines()
 
 
+_RO_AT_RISK = ("session_only", "not_enforced")
+
+
+def _access_out(a: dict) -> dict:
+    """What the login can do, plus the fix SQL when read-only isn't guaranteed."""
+    out = {"status": a["status"], "label": a["label"], "message": a["message"]}
+    if a["status"] in _RO_AT_RISK:
+        out["fix_sql"] = db_access.fix_sql(a.get("detail") or {})
+    return out
+
+
+async def _assess_and_store(conn: dict) -> dict:
+    """Measure a saved data source's real permissions and remember the result."""
+    a = await db_access.assess(conn["engine"], db_driver.decrypt(conn["dsn_encrypted"]), conn["mode"])
+    await db.set_db_access(conn["id"], a["status"], db_access.to_json(a))
+    return a
+
+
+async def _assess_unchecked() -> None:
+    """At boot: assess data sources that were saved before access checks existed."""
+    for c in await db.db_connections_unchecked():
+        try:
+            await _assess_and_store(c)
+        except Exception:  # noqa: BLE001
+            log.exception("access check failed for data source %s", c.get("id"))
+
+
 @app.get("/api/db-connections")
 async def list_db_connections(user: dict = Depends(current_user)):
-    return await db.list_db_connections(_org_id(user))
+    rows = await db.list_db_connections(_org_id(user))
+    for r in rows:
+        if r.get("access_status") in _RO_AT_RISK:
+            r["fix_sql"] = db_access.fix_sql(r.get("access") or {})
+    return rows
 
 
 @app.post("/api/db-connections")
@@ -583,13 +616,18 @@ async def create_db_connection(body: DbConnectionIn, user: dict = Depends(curren
             dsn_encrypted=encrypted, mode=body.mode)
     except Exception as e:  # UNIQUE(org_id, name) or similar
         raise HTTPException(409, f"could not create connection: {type(e).__name__}")
-    return {"id": cid, "name": body.name, "engine": body.engine, "mode": body.mode}
+    a = await _assess_and_store(await db.get_db_connection(cid, _org_id(user)))
+    return {"id": cid, "name": body.name, "engine": body.engine, "mode": body.mode,
+            "access": _access_out(a)}
 
 
 @app.post("/api/db-connections/test")
 async def test_db_connection_raw(body: DbConnectionTestIn, user: dict = Depends(current_user)):
     """Test a connection string before saving it (from the connect form)."""
-    return await runner.test_db_connection(body.engine, body.dsn, body.mode)
+    res = await runner.test_db_connection(body.engine, body.dsn, body.mode)
+    if res.get("ok"):
+        res["access"] = _access_out(await db_access.assess(body.engine, body.dsn, body.mode))
+    return res
 
 
 @app.post("/api/db-connections/{conn_id}/test")
@@ -598,7 +636,10 @@ async def test_db_connection_existing(conn_id: int, user: dict = Depends(current
     c = await db.get_db_connection(conn_id, _org_id(user))
     if not c:
         raise HTTPException(404, "data source not found")
-    return await runner.test_db_connection(c["engine"], db_driver.decrypt(c["dsn_encrypted"]), c["mode"])
+    res = await runner.test_db_connection(c["engine"], db_driver.decrypt(c["dsn_encrypted"]), c["mode"])
+    if res.get("ok"):
+        res["access"] = _access_out(await _assess_and_store(c))
+    return res
 
 
 @app.put("/api/db-connections/{conn_id}")
@@ -612,7 +653,9 @@ async def edit_db_connection(conn_id: int, body: DbConnectionUpdateIn,
     await db.update_db_connection(conn_id, _org_id(user), name=body.name,
                                   dsn_encrypted=enc, mode=body.mode)
     updated = await db.get_db_connection(conn_id, _org_id(user))
-    return {"id": conn_id, "name": updated["name"], "engine": updated["engine"], "mode": updated["mode"]}
+    a = await _assess_and_store(updated)       # new credentials or mode → re-check access
+    return {"id": conn_id, "name": updated["name"], "engine": updated["engine"],
+            "mode": updated["mode"], "access": _access_out(a)}
 
 
 @app.delete("/api/db-connections/{conn_id}")
