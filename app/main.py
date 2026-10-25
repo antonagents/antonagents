@@ -69,6 +69,8 @@ async def lifespan(app: FastAPI):
     await scheduler.start()
     # outcome jobs: verify any outcome a restart left mid-flight
     asyncio.create_task(outcomes.resume_pending())
+    # outcome recovery: launch retries when they come due (schedule lives in the DB)
+    asyncio.create_task(outcomes.recovery_loop())
     # data sources: measure what each login can really do (once, for older rows)
     asyncio.create_task(_assess_unchecked())
     if config.CONNECTORS_ENABLED:
@@ -1222,7 +1224,8 @@ async def reverify_outcome(outcome_id: int, user: dict = Depends(current_user)):
     o = await _owned_outcome_or_404(outcome_id, user)
     if o["status"] == "running":
         raise HTTPException(409, "the outcome is still running")
-    return await outcomes.verify_outcome(outcome_id)
+    # verification only — a manual re-check never launches new attempts
+    return await outcomes.verify_outcome(outcome_id, recover=False)
 
 
 @app.post("/api/agents/{agent_id}/outcomes/backfill")

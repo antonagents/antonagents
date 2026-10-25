@@ -336,6 +336,10 @@ async def init() -> None:
     # outcome jobs: a run is an attempt toward an outcome
     await _ensure_column("runs", "outcome_id", "INTEGER")
     await _ensure_column("runs", "attempt", "INTEGER")
+    await _ensure_column("runs", "memory", "TEXT")               # per-run memory override
+    # outcome recovery (step 2): when the next attempt is due + the attempt log
+    await _ensure_column("outcomes", "next_attempt_at", "TEXT")
+    await _ensure_column("outcomes", "recovery_json", "TEXT")
     await _ensure_column("agents", "kind", "TEXT NOT NULL DEFAULT 'routine'")
     # stable, unguessable public id for the API surface (/v1/agents/<public_id>)
     await _ensure_column("agents", "public_id", "TEXT")
@@ -966,10 +970,12 @@ async def get_agent_db_connections(agent_id: int) -> list[dict]:
 
 # ---------- runs ----------
 
-async def create_run(agent_id: int, *, prompt: Optional[str] = None, resume: bool = False) -> int:
+async def create_run(agent_id: int, *, prompt: Optional[str] = None, resume: bool = False,
+                     memory: Optional[str] = None) -> int:
+    """`memory` overrides the container memory for this run (outcome OOM recovery)."""
     cur = await _db.execute(
-        "INSERT INTO runs (agent_id, prompt, resume, status, created_at) VALUES (?,?,?,?,?)",
-        (agent_id, prompt, 1 if resume else 0, "queued", _now()),
+        "INSERT INTO runs (agent_id, prompt, resume, status, created_at, memory) VALUES (?,?,?,?,?,?)",
+        (agent_id, prompt, 1 if resume else 0, "queued", _now(), memory),
     )
     await _db.commit()
     return cur.lastrowid
@@ -1614,7 +1620,7 @@ async def link_run_to_outcome(run_id: int, outcome_id: int) -> int:
 
 
 _OUTCOME_FIELDS = {"status", "finished_at", "verified_at", "manifest_json", "receipt_json",
-                   "cost_usd", "needs_you_reason"}
+                   "cost_usd", "needs_you_reason", "next_attempt_at", "recovery_json"}
 
 
 async def update_outcome(outcome_id: int, **fields) -> None:
@@ -1649,6 +1655,7 @@ def _outcome_row(r) -> dict:
     d = dict(r)
     d["manifest"] = _unj(d.pop("manifest_json", None))
     d["receipt"] = _unj(d.pop("receipt_json", None))
+    d["recovery"] = _unj(d.pop("recovery_json", None)) or []
     return d
 
 
@@ -1692,3 +1699,26 @@ async def pending_outcomes() -> list[dict]:
     cur = await _db.execute(
         "SELECT * FROM outcomes WHERE status IN ('running','verifying') ORDER BY id")
     return [_outcome_row(r) for r in await cur.fetchall()]
+
+
+async def due_recoveries() -> list[dict]:
+    """Outcomes waiting to retry whose next attempt is due now."""
+    cur = await _db.execute(
+        "SELECT * FROM outcomes WHERE status='recovering' AND next_attempt_at <= ? ORDER BY id",
+        (_now(),))
+    return [_outcome_row(r) for r in await cur.fetchall()]
+
+
+async def inflight_outcome(agent_id: int) -> Optional[dict]:
+    """The agent's outcome that is still being worked on, if any."""
+    cur = await _db.execute(
+        "SELECT * FROM outcomes WHERE agent_id=? AND status IN ('running','verifying','recovering') "
+        "ORDER BY id DESC LIMIT 1", (agent_id,))
+    row = await cur.fetchone()
+    return _outcome_row(row) if row else None
+
+
+async def outcome_cost(outcome_id: int) -> float:
+    cur = await _db.execute(
+        "SELECT coalesce(sum(cost_usd),0) FROM runs WHERE outcome_id=?", (outcome_id,))
+    return float((await cur.fetchone())[0] or 0)

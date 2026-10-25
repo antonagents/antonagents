@@ -42,6 +42,21 @@ ROUTING_FILE = os.environ.get("SUPERAGENT_ROUTING_FILE", str(BASE_DIR / "routing
 # docker sandbox limits
 TASK_NETWORK = os.environ.get("SUPERAGENT_TASK_NETWORK", "bridge")
 TASK_MEMORY = os.environ.get("SUPERAGENT_TASK_MEMORY", "2g")
+# ceiling for outcome recovery's memory step-up after an out-of-memory attempt
+MAX_TASK_MEMORY = os.environ.get("SUPERAGENT_MAX_TASK_MEMORY", "4g")
+
+
+def _mem_mb(s: str) -> int:
+    s = (s or "").strip().lower()
+    num = float("".join(ch for ch in s if ch.isdigit() or ch == ".") or 0)
+    return int(num * 1024) if s.endswith("g") else int(num)
+
+
+def step_memory(current: "Optional[str]") -> "Optional[str]":
+    """Next memory size for a retry after OOM (+1 GiB), or None if already at the cap."""
+    cur = _mem_mb(current or TASK_MEMORY)
+    nxt = min(cur + 1024, _mem_mb(MAX_TASK_MEMORY))
+    return f"{nxt // 1024}g" if nxt > cur else None
 TASK_CPUS = os.environ.get("SUPERAGENT_TASK_CPUS", "2")
 TASK_PIDS = os.environ.get("SUPERAGENT_TASK_PIDS", "512")
 

@@ -5,6 +5,7 @@ when it fires, creates a new run and hands it to the runner. One-shot ('once')
 agents are not scheduled here — they run only on manual trigger or chat.
 """
 import asyncio
+import logging
 from typing import Optional
 
 from apscheduler.events import EVENT_JOB_MISSED
@@ -13,6 +14,8 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from . import alerts, db, runner
+
+log = logging.getLogger("antonagents.scheduler")
 
 _scheduler: Optional[AsyncIOScheduler] = None
 
@@ -37,6 +40,13 @@ def validate_schedule(kind: str, expr: Optional[str]) -> None:
 async def _fire(agent_id: int) -> None:
     agent = await db.get_agent(agent_id)
     if not agent or not agent["enabled"]:
+        return
+    # outcome jobs: never start a new occurrence while the previous one is still
+    # being worked on or recovered (two attempts would race on the same work)
+    busy = await db.inflight_outcome(agent_id)
+    if busy:
+        log.warning("agent %s: skipping scheduled run, outcome %s still %s",
+                    agent_id, busy["id"], busy["status"])
         return
     run_id = await db.create_run(agent_id, prompt=agent.get("prompt") or "")
     await runner.start_run(run_id, agent)

@@ -536,6 +536,12 @@
   .oc-dot.b-succeeded{ background:var(--ok); } .oc-dot.b-failed{ background:var(--err); }
   .oc-dot.b-running{ background:var(--warn); } .oc-dot.b-none{ background:var(--line-strong); }
   .oc-dot::before{ display:none; }
+  .oc-needs{ font-size:var(--fs-sm); color:var(--fg); background:var(--err-soft); border-radius:var(--r-sm); padding:7px 10px; }
+  .oc-needs b{ color:var(--err); }
+  .oc-steps{ margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:3px;
+    font-size:var(--fs-xs); color:var(--fg-2); }
+  .oc-att{ font-family:var(--font-mono); color:var(--muted); margin-right:4px; }
+  .oc-act{ color:var(--muted); }
   .oc-obj{ font-size:var(--fs-xs); color:var(--fg-2); border-top:1px solid var(--line); padding-top:8px; }
   .oc-k{ font-family:var(--font-mono); text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-right:6px; }
   .oc-v{ color:var(--muted); margin-left:6px; }
@@ -1975,7 +1981,10 @@ const _OC = {
   failed:    {cls:'failed',    label:'not verified'},
   verifying: {cls:'running',   label:'verifying'},
   running:   {cls:'running',   label:'running'},
+  recovering:{cls:'running',   label:'recovering'},
+  needs_you: {cls:'failed',    label:'needs you'},
 };
+const _OC_ACT = {retry:'retried', needs_you:'asked you', gave_up:'gave up'};
 // list badge: a routine with a definition of done shows its latest OUTCOME
 function _taskBadge(t){
   const o = t.last_outcome;
@@ -2024,7 +2033,13 @@ function outcomeCard(t){
       ${busy ? '' : `<a href="#" class="oc-again" onclick="reverifyOutcome(${o.id});return false">verify again</a>`}
     </div>
     ${r.note ? `<div class="oc-note">${esc(r.note)}</div>` : ''}
+    ${o.status === 'needs_you' && o.needs_you_reason ? `<div class="oc-needs"><b>Needs you:</b> ${esc(o.needs_you_reason)}</div>` : ''}
+    ${o.status === 'recovering' && o.next_attempt_at ? `<div class="oc-note">Next attempt ${esc(_ocTime(o.next_attempt_at))}</div>` : ''}
     ${checks ? `<ul class="oc-checks">${checks}</ul>` : ''}
+    ${(r.attempt_log||[]).length ? `<ol class="oc-steps">${r.attempt_log.map(e => `<li>
+        <span class="oc-att">Attempt ${e.attempt}</span> ${esc(e.label||e.class)}
+        <span class="oc-act">→ ${esc(_OC_ACT[e.action]||e.action||'')}${e.memory?` with ${esc(e.memory)} memory`:''}</span></li>`).join('')}
+        ${o.status==='delivered' ? `<li><span class="oc-att">Attempt ${o.attempts}</span> verified <span class="oc-act">→ delivered</span></li>` : ''}</ol>` : ''}
     <div class="oc-foot"><span>${esc(meta)}</span>${outs.length>1?`<span class="oc-hist">recent ${hist}</span>`:''}</div>
     ${obj}
   </div>`;

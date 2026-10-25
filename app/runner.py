@@ -294,12 +294,13 @@ def _build_spec(agent: dict, model: str, *, prompt: str, resume: Optional[str],
     return {k: v for k, v in spec.items() if v is not None}
 
 
-def _docker_cmd(run_id: int, agent_id: int, inject_env: dict) -> list[str]:
+def _docker_cmd(run_id: int, agent_id: int, inject_env: dict,
+                memory: Optional[str] = None) -> list[str]:
     cmd = [
         "docker", "run", "--rm", "-i",
         "--name", f"superagent-run-{run_id}",
         "--network", config.TASK_NETWORK,
-        "--memory", config.TASK_MEMORY,
+        "--memory", memory or config.TASK_MEMORY,
         "--cpus", config.TASK_CPUS,
         "--pids-limit", config.TASK_PIDS,
         # per-agent persistent workspace: survives across runs so chat/follow-ups
@@ -329,6 +330,7 @@ async def execute_run(run_id: int, agent: dict) -> None:
     run = await db.get_run(run_id)
     prompt = (run and run.get("prompt")) or agent.get("prompt") or ""
     resume = agent.get("last_session_id") if (run and run.get("resume")) else None
+    run_memory = (run and run.get("memory")) or None   # outcome OOM recovery override
     mcp_servers = None
 
     # outcome jobs: a routine with a published job spec turns this run into an
@@ -476,7 +478,7 @@ async def execute_run(run_id: int, agent: dict) -> None:
 
         try:
             proc = await asyncio.create_subprocess_exec(
-                *_docker_cmd(run_id, agent["id"], inject_env),
+                *_docker_cmd(run_id, agent["id"], inject_env, memory=run_memory),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -551,7 +553,7 @@ async def execute_run(run_id: int, agent: dict) -> None:
         if error is None and exit_code not in (0, None):
             if oom["hit"]:
                 # confirmed by the Docker oom event — a precise, groupable failure class
-                error = (f"out of memory — the run exceeded its {config.TASK_MEMORY} "
+                error = (f"out of memory — the run exceeded its {run_memory or config.TASK_MEMORY} "
                          f"container memory limit and was killed")
             else:
                 stderr = b""
@@ -562,7 +564,7 @@ async def execute_run(run_id: int, agent: dict) -> None:
                         pass
                 error = stderr.decode(errors="replace").strip()[-2000:] or f"exit {exit_code}"
                 if exit_code == 137:   # SIGKILL under a mem cap: almost always OOM (flag unseen)
-                    error = f"{error} (likely out of memory — exceeded {config.TASK_MEMORY})"
+                    error = f"{error} (likely out of memory — exceeded {run_memory or config.TASK_MEMORY})"
 
         status = "succeeded" if (exit_code == 0 and not error) else "failed"
         await db.finish_run(

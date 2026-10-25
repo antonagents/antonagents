@@ -1,9 +1,17 @@
 # Feature: Outcome Jobs (delegate the job, get the outcome)
 
-> Status: **step 1 implemented** (2026-10-25) — job specs, outcomes, independent
-> `sql` + `artifact` verification, receipts, console outcome card. Piloted on
-> agent 60 (Daily pricing pipeline). Steps 2–6 not started. `connector` checks
-> are deferred to a later step (the pilot doesn't need them).
+> Status: **steps 1–2 implemented** (2026-10-25).
+> Step 1 — job specs, outcomes, independent `sql` + `artifact` verification,
+> receipts, console outcome card; live on agent 60 (first live verified outcome:
+> #3, 2026-10-25). Step 2 — recovery loop: failure classifier (blocked, auth,
+> provider limit/error, OOM, timeout, interrupted, check failed, run failed),
+> retries within budget (default 3 attempts, optional cost cap) with the failure
+> fed back to the agent, OOM memory step-up (2g→3g→4g), provider back-off,
+> needs-you for blocked/auth, DB-backed retry schedule, no overlapping scheduled
+> runs, per-run failure alerts suppressed for attempts.
+> Not yet: resuming a timed-out session (the harness only reports the session id
+> on completion), provider *fallback* (only back-off), `connector` checks.
+> Steps 3–6 not started.
 > Positioning decision behind it: see `positioning` memory — "outcome-based, not
 > ask-and-it-does".
 

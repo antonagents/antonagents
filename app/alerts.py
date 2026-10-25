@@ -34,6 +34,10 @@ async def evaluate_run(run_id: int) -> None:
             continue
         kind, cond = r["kind"], (r.get("condition") or "")
         title = body = None
+        # an attempt toward an outcome may still be recovered — the outcome engine
+        # notifies only when it needs the user or gives up, so skip per-run failures
+        if kind == "on_failure" and status == "failed" and run.get("outcome_id"):
+            continue
         if kind == "on_failure" and status == "failed":
             title = f'{name}: run #{run_id} failed'
             body = (run.get("error") or "")[:500]
