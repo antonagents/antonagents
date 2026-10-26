@@ -44,14 +44,15 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import (auth, config, connectors, db, db_access, deliver, outcomes, providers, ratelimit, runner,
+from . import (auth, config, connectors, db, db_access, deliver, outcomes, planner, providers, ratelimit, runner,
                scheduler, templates, verify)
 from .auth import current_user
 from .connectors import db_driver
 from .models import (AgentAlertsIn, AgentConnectorsIn, AgentCreate, AgentModelIn, AgentNameIn,
                      AgentDbConnectionsIn, AgentScheduleIn, AgentSkillsIn, ApiKeyIn,
                      DbConnectionIn, DbConnectionTestIn, DbConnectionUpdateIn,
-                     InvitationIn, JobSpecIn, LoginIn, MemberRoleIn, SignupInviteIn,
+                     InvitationIn, JobSpecIn, LoginIn, MemberRoleIn, ResolveIn,
+                     SignupInviteIn, SpecDraftIn, TestChecksIn,
                      NotificationsReadIn, OrgSwitchIn, RegisterIn,
                      ReplyIn, SkillIn, V1ChatIn)
 
@@ -1136,46 +1137,15 @@ async def mark_read(body: NotificationsReadIn, user: dict = Depends(current_user
 
 # ---------------- outcome jobs (docs/features/outcome-jobs.md) ----------------
 
-_ARTIFACT_KEYS = {"path", "non_empty", "modified_since_start", "contains",
-                  "last_line_matches", "line_regex", "ts_after_start"}
-
-
 async def _validate_checks(checks, org_id: int) -> list[dict]:
-    """Validate + normalize checks. Every check must be runnable read-only."""
+    """Validate + normalize checks (shared validator in app/verify.py)."""
     out = []
     for c in checks:
-        cfg = dict(c.config or {})
-        label = f"check '{c.name}'"
-        if c.kind == "sql":
-            err = verify.validate_select(cfg.get("query", ""))
-            if err:
-                raise HTTPException(400, f"{label}: {err}")
-            expect = (cfg.get("expect") or "nonempty").strip()
-            if not verify.parse_expect(expect):
-                raise HTTPException(400, f"{label}: unsupported expect '{expect}' "
-                                         "(use e.g. '>= 100', 'between 1 and 9', 'nonempty')")
-            try:
-                cid = int(cfg.get("connection_id") or 0)
-            except (TypeError, ValueError):
-                cid = 0
-            conn = await db.get_db_connection(cid, org_id)
-            if not conn:
-                raise HTTPException(400, f"{label}: data source not found in this workspace")
-            if conn["engine"] != "postgres":
-                raise HTTPException(400, f"{label}: only Postgres data sources can be checked for now")
-            cfg = {"connection_id": cid, "query": cfg["query"].strip(), "expect": expect}
-        else:  # artifact
-            if not verify.safe_rel_path(cfg.get("path", "")):
-                raise HTTPException(400, f"{label}: path must be relative to the workspace")
-            for k in ("line_regex", "last_line_matches"):
-                if cfg.get(k):
-                    try:
-                        re.compile(cfg[k])
-                    except re.error as e:
-                        raise HTTPException(400, f"{label}: invalid {k}: {e}")
-            cfg = {k: v for k, v in cfg.items() if k in _ARTIFACT_KEYS}
-        out.append({"kind": c.kind, "name": c.name.strip(), "config": cfg,
-                    "required": c.required, "strength": "verified"})
+        try:
+            out.append(await verify.validate_check(
+                {"kind": c.kind, "name": c.name, "config": c.config, "required": c.required}, org_id))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
     return out
 
 
@@ -1201,6 +1171,81 @@ async def put_job_spec(agent_id: int, body: JobSpecIn, user: dict = Depends(curr
         deliver_to=deliver_to, constraints=body.constraints, budget=body.budget,
         created_by=user["id"], publish=body.publish)
     return {"spec": await db.get_spec(spec_id)}
+
+
+@app.post("/api/agents/{agent_id}/spec/draft")
+async def draft_job_spec(agent_id: int, body: SpecDraftIn, user: dict = Depends(current_user)):
+    """Plain-language outcome → a draft definition of done (nothing is saved)."""
+    agent = await _owned_agent_or_404(agent_id, user)
+    if (agent.get("kind") or "routine") == "chat":
+        raise HTTPException(400, "definitions of done apply to routines, not chats")
+    from .llm import LLMError
+    try:
+        return await planner.draft(agent, body.description)
+    except LLMError as e:
+        raise HTTPException(502, f"The planner couldn't draft this: {e}")
+
+
+def _check_inputs(checks) -> list[dict]:
+    return [{"kind": c.kind, "name": c.name, "config": c.config, "required": c.required}
+            for c in checks]
+
+
+@app.post("/api/agents/{agent_id}/spec/test-checks")
+async def test_job_checks(agent_id: int, body: TestChecksIn, user: dict = Depends(current_user)):
+    """Would these checks pass for the routine's latest run? Read-only, a few seconds."""
+    agent = await _owned_agent_or_404(agent_id, user)
+    checks = await _validate_checks(body.checks, _org_id(user))
+    last = await db.last_run(agent_id)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    start = (last or {}).get("started_at") or (last or {}).get("created_at") or now
+    ctx = {"date": start[:10], "outcome_start": start,
+           "outcome_end": (last or {}).get("finished_at"),
+           "org_id": _org_id(user), "agent_id": agent_id}
+    results = await verify.run_checks(checks, ctx)
+    return {"against_run": last and last.get("id"), "date": ctx["date"],
+            "passed": all(r["passed"] for r in results if r["required"]),
+            "results": results}
+
+
+@app.post("/api/agents/{agent_id}/spec/dry-run")
+async def dry_run_job_spec(agent_id: int, body: JobSpecIn, user: dict = Depends(current_user)):
+    """Run one real attempt against a DRAFT definition of done and verify it.
+    Nothing is delivered and nothing is retried; the spec is not published."""
+    agent = await _owned_agent_or_404(agent_id, user)
+    if (agent.get("kind") or "routine") == "chat":
+        raise HTTPException(400, "definitions of done apply to routines, not chats")
+    if await db.inflight_outcome(agent_id):
+        raise HTTPException(409, "this routine is already working on an outcome — try again when it finishes")
+    checks = await _validate_checks(body.checks, _org_id(user))
+    try:
+        deliver_to = await asyncio.to_thread(deliver.normalize_deliver_to, body.deliver_to)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    spec_id = await db.create_job_spec(
+        agent_id, objective=body.objective.strip(), checks=checks, deliver_to=deliver_to,
+        constraints=body.constraints, budget=body.budget, created_by=user["id"], publish=False)
+    spec = await db.get_spec(spec_id)
+    oid = await db.create_outcome(agent_id, agent["org_id"], spec, trigger="dry_run")
+    run_id = await db.create_run(agent_id, prompt=agent["prompt"])
+    await db.link_run_to_outcome(run_id, oid)
+    await runner.start_run(run_id, agent)
+    return {"outcome_id": oid, "run_id": run_id, "spec_id": spec_id}
+
+
+@app.get("/api/needs-you")
+async def needs_you_inbox(user: dict = Depends(current_user)):
+    return await db.list_needs_you(_org_id(user))
+
+
+@app.post("/api/outcomes/{outcome_id}/resolve")
+async def resolve_outcome(outcome_id: int, body: ResolveIn, user: dict = Depends(current_user)):
+    """Answer a needs-you outcome: retry, retry with an answer for the agent, or dismiss."""
+    await _owned_outcome_or_404(outcome_id, user)
+    try:
+        return await outcomes.resolve(outcome_id, body.action, body.message)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
 
 
 @app.get("/api/agents/{agent_id}/outcomes")

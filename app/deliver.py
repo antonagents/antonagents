@@ -234,7 +234,7 @@ async def deliver_outcome(outcome_id: int, force: bool = False) -> list[dict]:
     """Send a verified outcome to each message destination, exactly once.
     `force` retries destinations that already used up their attempts."""
     o = await db.get_outcome(outcome_id)
-    if not o or o["status"] != "delivered" or o.get("trigger") == "backfill":
+    if not o or o["status"] != "delivered" or o.get("trigger") in ("backfill", "dry_run"):
         return (o or {}).get("deliveries") or []
     spec = await db.get_spec(o["spec_id"]) if o.get("spec_id") else None
     agent = await db.get_agent(o["agent_id"])

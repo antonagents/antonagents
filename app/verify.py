@@ -239,3 +239,50 @@ async def run_check(check: dict, ctx: dict) -> dict:
 
 async def run_checks(checks: list[dict], ctx: dict) -> list[dict]:
     return list(await asyncio.gather(*(run_check(c, ctx) for c in checks)))
+
+
+ARTIFACT_KEYS = {"path", "non_empty", "modified_since_start", "contains",
+                 "last_line_matches", "line_regex", "ts_after_start"}
+
+
+async def validate_check(c: dict, org_id: int) -> dict:
+    """Validate + normalize one check (dict with kind/name/config/required).
+    Raises ValueError with a user-facing message. Every check must be runnable
+    read-only. Shared by the API and the job planner."""
+    kind, name = c.get("kind"), str(c.get("name") or "").strip()
+    if kind not in SUPPORTED_KINDS:
+        raise ValueError(f"check '{name or '?'}': kind must be one of {sorted(SUPPORTED_KINDS)}")
+    if not name:
+        raise ValueError("every check needs a name")
+    cfg = dict(c.get("config") or {})
+    label = f"check '{name}'"
+    if kind == "sql":
+        err = validate_select(cfg.get("query", ""))
+        if err:
+            raise ValueError(f"{label}: {err}")
+        expect = (cfg.get("expect") or "nonempty").strip()
+        if not parse_expect(expect):
+            raise ValueError(f"{label}: unsupported expect '{expect}' "
+                             "(use e.g. '>= 100', 'between 1 and 9', 'nonempty')")
+        try:
+            cid = int(cfg.get("connection_id") or 0)
+        except (TypeError, ValueError):
+            cid = 0
+        conn = await db.get_db_connection(cid, org_id)
+        if not conn:
+            raise ValueError(f"{label}: data source not found in this workspace")
+        if conn["engine"] != "postgres":
+            raise ValueError(f"{label}: only Postgres data sources can be checked for now")
+        cfg = {"connection_id": cid, "query": cfg["query"].strip(), "expect": expect}
+    else:  # artifact
+        if not safe_rel_path(cfg.get("path", "")):
+            raise ValueError(f"{label}: path must be relative to the workspace")
+        for k in ("line_regex", "last_line_matches"):
+            if cfg.get(k):
+                try:
+                    re.compile(cfg[k])
+                except re.error as e:
+                    raise ValueError(f"{label}: invalid {k}: {e}")
+        cfg = {k: v for k, v in cfg.items() if k in ARTIFACT_KEYS}
+    return {"kind": kind, "name": name, "config": cfg,
+            "required": bool(c.get("required", True)), "strength": "verified"}

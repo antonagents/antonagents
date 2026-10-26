@@ -161,3 +161,16 @@ class JobSpecIn(BaseModel):
     constraints: Optional[list] = None
     budget: Optional[dict] = None
     publish: bool = False
+
+
+class SpecDraftIn(BaseModel):
+    description: str = Field(..., min_length=5, max_length=4000)
+
+
+class TestChecksIn(BaseModel):
+    checks: list[JobCheckIn] = Field(..., min_length=1, max_length=20)
+
+
+class ResolveIn(BaseModel):
+    action: Literal["retry", "answer", "dismiss"]
+    message: Optional[str] = Field(None, max_length=2000)

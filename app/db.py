@@ -1163,11 +1163,32 @@ async def live_status(org_id: int) -> dict:
            FROM agents a JOIN runs r
              ON r.id = (SELECT id FROM runs WHERE agent_id=a.id ORDER BY id DESC LIMIT 1)
            WHERE a.org_id=? AND a.kind='routine' AND r.status IN ('failed','interrupted')
+             -- not "broken" if the outcome engine is recovering it, verified it anyway,
+             -- or is already asking the user (that shows up under needs_you instead)
+             AND NOT EXISTS (SELECT 1 FROM outcomes o WHERE o.id = r.outcome_id
+                             AND o.status IN ('running','verifying','recovering','delivered','needs_you'))
            ORDER BY r.id DESC LIMIT 6""", (org_id,))
     broken = [{"run_id": x["run_id"], "agent_id": x["agent_id"], "name": x["name"],
                "error": (x["error"] or x["status"] or "")[:120], "at": x["finished_at"]}
               for x in await cur.fetchall()]
-    return {"running": running, "running_count": len(running), "broken": broken}
+    return {"running": running, "running_count": len(running), "broken": broken,
+            "needs_you": await list_needs_you(org_id)}
+
+
+async def list_needs_you(org_id: int) -> list[dict]:
+    """Outcomes waiting on a person (the needs-you inbox)."""
+    cur = await _db.execute(
+        """SELECT o.id outcome_id, o.agent_id, a.name, o.needs_you_reason reason,
+                  o.attempts, o.finished_at at, o.recovery_json
+           FROM outcomes o JOIN agents a ON a.id = o.agent_id
+           WHERE o.org_id=? AND o.status='needs_you' ORDER BY o.id DESC LIMIT 20""", (org_id,))
+    out = []
+    for r in await cur.fetchall():
+        d = dict(r)
+        log_ = _unj(d.pop("recovery_json")) or []
+        d["class"] = (log_[-1] if log_ else {}).get("class")
+        out.append(d)
+    return out
 
 
 async def activity(org_id: int, since_iso: str, agent_id: Optional[int] = None,

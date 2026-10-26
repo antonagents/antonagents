@@ -73,14 +73,17 @@ async def begin_attempt(run_id: int, agent: dict, run: dict) -> Optional[str]:
     to an outcome and return the prompt addendum; otherwise return None."""
     if (agent.get("kind") or "routine") == "chat":
         return None
+    oid = run.get("outcome_id")
+    if oid:   # already attached (a recovery retry or a dry run): use THAT outcome's spec
+        o = await db.get_outcome(oid)
+        spec = await db.get_spec(o["spec_id"]) if o and o.get("spec_id") else None
+        return prompt_addendum(spec, oid) if spec and spec["checks"] else None
     spec = await db.get_published_spec(agent["id"])
     if not spec or not spec["checks"]:
         return None
-    oid = run.get("outcome_id")
-    if not oid:
-        oid = await db.create_outcome(agent["id"], agent["org_id"], spec, trigger="run",
-                                      started_at=run.get("created_at"))
-        await db.link_run_to_outcome(run_id, oid)
+    oid = await db.create_outcome(agent["id"], agent["org_id"], spec, trigger="run",
+                                  started_at=run.get("created_at"))
+    await db.link_run_to_outcome(run_id, oid)
     return prompt_addendum(spec, oid)
 
 
@@ -146,6 +149,8 @@ async def verify_outcome(outcome_id: int, attempt: Optional[int] = None,
         raise ValueError("outcome or its spec not found")
     attempt = attempt or o["attempts"] or 1
     prev_status = o["status"]
+    if o.get("trigger") in ("backfill", "dry_run"):
+        recover = False          # one attempt only; a dry run never retries or delivers
     await db.update_outcome(outcome_id, status="verifying")
 
     run_row = next((r for r in o["runs"] if r["attempt"] == attempt), None)
@@ -168,9 +173,19 @@ async def verify_outcome(outcome_id: int, attempt: Optional[int] = None,
     now = _now()
     cost = await db.outcome_cost(outcome_id)
 
+    preview = None
+    if o.get("trigger") == "dry_run" and deliver.message_destinations(spec):
+        try:
+            agent_ = await db.get_agent(o["agent_id"])
+            msg = await deliver._read_outbox(o["agent_id"], outcome_id)
+            preview = deliver.compose({**o, "manifest": manifest, "receipt": {}}, agent_ or {}, msg)["plain"]
+        except Exception:  # noqa: BLE001
+            log.exception("could not build the dry-run delivery preview")
     if delivered:
         receipt = _receipt(o, spec, results, run, True, strength)
         receipt["attempt_log"] = o["recovery"]
+        if preview:
+            receipt["delivery_preview"] = preview
         await db.update_outcome(
             outcome_id, status="delivered", finished_at=now, verified_at=now,
             next_attempt_at=None, needs_you_reason=None,
@@ -184,6 +199,8 @@ async def verify_outcome(outcome_id: int, attempt: Optional[int] = None,
         return await db.get_outcome(outcome_id)
 
     receipt = _receipt(o, spec, results, run, False, strength)
+    if preview:
+        receipt["delivery_preview"] = preview
     if not recover:
         keep = prev_status if prev_status in ("needs_you", "recovering") else "failed"
         receipt["attempt_log"] = o["recovery"]
@@ -429,3 +446,36 @@ async def resume_pending() -> None:
             await verify_outcome(o["id"])
     except Exception:  # noqa: BLE001
         log.exception("resume_pending failed")
+
+
+# ---------------- needs-you actions (step 4) ----------------
+
+async def resolve(outcome_id: int, action: str, message: Optional[str] = None) -> dict:
+    """Answer a needs-you outcome: retry it, retry with the user's answer, or dismiss."""
+    o = await db.get_outcome(outcome_id)
+    if not o or o["status"] != "needs_you":
+        raise ValueError("this outcome isn't waiting for you")
+    now = _now()
+    if action == "dismiss":
+        log_ = o["recovery"] + [{"attempt": o["attempts"], "class": "user",
+                                 "label": "Dismissed by you", "action": "dismissed", "at": now}]
+        await db.update_outcome(outcome_id, status="failed", finished_at=now,
+                                recovery_json=json.dumps(log_))
+        return await db.get_outcome(outcome_id)
+    if action == "answer" and not (message or "").strip():
+        raise ValueError("write an answer for the agent")
+    reason = o.get("needs_you_reason") or "a problem the agent couldn't fix on its own"
+    note = ("RECOVERY — a person reviewed this job. "
+            + (f"Their answer: {message.strip()}" if action == "answer" and message
+               else "They asked you to try again.")
+            + f"\nWhat went wrong before: {reason}")
+    last_mem = next((r.get("memory") for r in reversed(o["runs"]) if r.get("memory")), None)
+    entry = {"attempt": o["attempts"], "class": "user",
+             "label": "You answered" if action == "answer" else "You asked to retry",
+             "detail": (message or "")[:300], "action": "retry", "note": note,
+             "memory": last_mem, "next_attempt_at": now, "at": now}
+    await db.update_outcome(outcome_id, status="recovering", next_attempt_at=now,
+                            needs_you_reason=None, finished_at=None,
+                            recovery_json=json.dumps(o["recovery"] + [entry]))
+    await _launch_next_attempt(await db.get_outcome(outcome_id))
+    return await db.get_outcome(outcome_id)

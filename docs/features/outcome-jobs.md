@@ -1,6 +1,6 @@
 # Feature: Outcome Jobs (delegate the job, get the outcome)
 
-> Status: **steps 1–2 implemented** (2026-10-25).
+> Status: **steps 1–4 implemented** (2026-10-26).
 > Step 1 — job specs, outcomes, independent `sql` + `artifact` verification,
 > receipts, console outcome card; live on agent 60 (first live verified outcome:
 > #3, 2026-10-25). Step 2 — recovery loop: failure classifier (blocked, auth,
@@ -17,7 +17,18 @@
 > webhook json/slack) as the routine owner, retries a failed destination 3× then
 > notifies once; webhooks are SSRF-guarded; backfills never deliver. Slack/email
 > sends are not yet exercised live (no connected Slack/mailbox on the pilot account).
-> Steps 4–6 not started.
+> Step 4 — delegate a job: describe the outcome in plain language → the planner
+> (host-side model call through the configured providers) drafts checks grounded
+> in the routine's instructions, recent runs, real workspace files, the data
+> sources' schema (read-only) and connected channels; every proposed check and
+> destination goes through the same validator as a hand-written spec (invalid ones
+> are dropped with a warning). Review form in the console: edit checks/config,
+> destinations, budget; **Test checks now** (read-only, against the latest run),
+> **Dry run** (one real attempt against a draft spec — verified, never delivered or
+> retried, shows the would-be message), **Publish**. Needs-you inbox on Routines +
+> header pill: Retry, Retry with an answer (fed to the next attempt), Dismiss;
+> reconnect link for auth failures.
+> Steps 5–6 not started.
 > Positioning decision behind it: see `positioning` memory — "outcome-based, not
 > ask-and-it-does".
 

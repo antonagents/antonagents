@@ -542,6 +542,40 @@
     font-size:var(--fs-xs); color:var(--fg-2); }
   .oc-att{ font-family:var(--font-mono); color:var(--muted); margin-right:4px; }
   .oc-act{ color:var(--muted); }
+  /* definition-of-done editor + needs-you inbox (outcome jobs step 4) */
+  .dod-lead{ font-size:var(--fs-base); color:var(--fg-2); margin:0 0 var(--sp-3); line-height:1.55; }
+  .dod-sec{ margin-top:var(--sp-4); }
+  .dod-sec > .fld-label{ display:block; margin-bottom:6px; }
+  .dod-note{ font-size:var(--fs-xs); color:var(--fg-2); background:var(--surface-2); border:1px solid var(--line);
+    border-radius:var(--r-sm); padding:8px 10px; line-height:1.5; }
+  .dod-warn{ font-size:var(--fs-xs); color:var(--warn); margin-top:6px; }
+  .dod-check{ border:1px solid var(--line); border-radius:var(--r-md); padding:10px 12px; display:flex;
+    flex-direction:column; gap:6px; background:var(--surface); }
+  .dod-check + .dod-check{ margin-top:8px; }
+  .dod-crow{ display:flex; align-items:center; gap:8px; }
+  .dod-crow input[type=text]{ flex:1; }
+  .dod-kind{ font-family:var(--font-mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.08em;
+    color:var(--muted); border:1px solid var(--line); border-radius:var(--r-pill); padding:2px 8px; }
+  .dod-sum{ font-size:var(--fs-xs); color:var(--fg-2); }
+  .dod-check details summary{ font-size:var(--fs-xs); color:var(--accent); cursor:pointer; }
+  .dod-check textarea{ font-family:var(--font-mono); font-size:11.5px; min-height:84px; margin-top:6px; }
+  .dod-x{ padding:2px 8px; font-size:var(--fs-xs); }
+  .dod-res{ font-size:var(--fs-xs); font-family:var(--font-mono); color:var(--fg-2); }
+  .dod-res.pass{ color:var(--ok); } .dod-res.fail{ color:var(--err); }
+  .dod-grid{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 12px; }
+  @media (max-width:640px){ .dod-grid{ grid-template-columns:1fr; } }
+  .dod-grid label{ font-size:var(--fs-base); color:var(--fg); display:flex; align-items:center; gap:8px; }
+  .dod-out{ margin-top:var(--sp-3); }
+  .dod-preview{ white-space:pre-wrap; font-size:var(--fs-xs); background:var(--surface-2); border:1px solid var(--line);
+    border-radius:var(--r-sm); padding:8px 10px; margin-top:6px; }
+  .ny-panel{ border-left:3px solid var(--err); }
+  .ny-item{ display:flex; flex-direction:column; gap:6px; padding:10px 0; }
+  .ny-item + .ny-item{ border-top:1px solid var(--line); }
+  .ny-name{ font-weight:600; font-size:var(--fs-base); }
+  .ny-reason{ font-size:var(--fs-base); color:var(--fg-2); line-height:1.5; }
+  .ny-actions{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .ny-actions input{ flex:1; min-width:180px; }
+  .oc-cta{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .oc-dl{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:var(--fs-xs); }
   .oc-dchip{ padding:2px 8px; border-radius:var(--r-pill); border:1px solid var(--line); color:var(--fg-2); background:var(--surface-2); }
   .oc-dchip.ok{ color:var(--ok); border-color:color-mix(in oklab,var(--ok) 40%,transparent); background:var(--ok-soft); }
@@ -913,6 +947,14 @@
 </div>
 
 <!-- ===== SCHEDULE EDITOR ===== -->
+<div id="dodModal" class="modal" onclick="if(event.target===this)closeDod()">
+  <div class="modal-card" style="width:800px">
+    <div class="modal-head"><h2>Definition of done</h2><span class="count" id="dodFor"></span>
+      <button class="ghost" style="margin-left:auto" onclick="closeDod()">Close</button></div>
+    <div class="modal-body" id="dodBody"></div>
+  </div>
+</div>
+
 <div id="scheduleModal" class="modal" onclick="if(event.target===this)closeSchedule()">
   <div class="modal-card" style="width:460px">
     <div class="modal-head"><h2>Schedule</h2>
@@ -1056,7 +1098,7 @@
   <button class="icon" id="navToggle" onclick="toggleNav()" title="Toggle menu" aria-label="Toggle menu" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
   <div class="brand"><span class="mark"></span><h1>anton<b>agents</b></h1></div>
   <span class="spacer"></span>
-  <span class="live-status" id="liveStatus" style="display:none"></span>
+  <span class="live-status" id="liveStatus" style="display:none;cursor:pointer" onclick="showView('routines')" title="Open routines"></span>
 </header>
 
 <div id="shell">
@@ -1121,6 +1163,10 @@
     <section id="view-routines" class="view">
       <div class="routines-wrap">
         <div class="routines-left col">
+          <div class="panel ny-panel" id="needsYouPanel" style="display:none">
+            <p class="eyebrow">Needs you</p>
+            <div id="needsYouList"></div>
+          </div>
           <div class="panel" id="impactPanel" style="display:none">
             <p class="eyebrow">Impact</p>
             <div id="impact" class="impact-strip"></div>
@@ -2013,12 +2059,16 @@ function _ocVal(v){
 // detail card: the latest outcome's receipt + per-check evidence
 function outcomeCard(t){
   const spec = t.spec;
-  if (!spec || spec.status !== 'published') return '';
+  if ((t.kind||'routine') === 'chat') return '';
+  if (!spec || spec.status !== 'published') return `<div class="outcome-card oc-none"><div class="oc-cta">
+    <span class="oc-sum">${spec ? `A draft definition of done (v${spec.version}) isn't live yet.` : 'No definition of done — runs are reported, not verified.'}</span>
+    <a href="#" onclick="openDod(${t.id});return false">${spec ? 'Review &amp; publish' : 'Define what done means'}</a></div></div>`;
   const outs = t.outcomes || [];
   const o = outs[0];
   const dests = (spec.deliver_to||[]).map(_dest).filter(Boolean);
   const obj = `<div class="oc-obj"><span class="oc-k">Definition of done</span> ${esc(spec.objective||'')}
-    <span class="oc-v">v${spec.version} · ${spec.checks.length} check${spec.checks.length===1?'':'s'}${dests.length?' · delivers to '+esc(dests.join(', ')):''}</span></div>`;
+    <span class="oc-v">v${spec.version} · ${spec.checks.length} check${spec.checks.length===1?'':'s'}${dests.length?' · delivers to '+esc(dests.join(', ')):''}
+    · <a href="#" onclick="openDod(${t.id});return false">edit</a></span></div>`;
   if (!o) return `<div class="outcome-card oc-none">${obj}
     <div class="oc-sum">The next run will be verified against these checks.</div></div>`;
   const st = _OC[o.status] || {cls:'none', label:o.status};
@@ -2038,12 +2088,15 @@ function outcomeCard(t){
   const busy = o.status === 'running' || o.status === 'verifying';
   return `<div class="outcome-card oc-${st.cls}">
     <div class="oc-head">
-      <span class="badge b-${st.cls}">${esc(r.headline || st.label)}</span>
+      <span class="badge b-${st.cls}">${esc(r.headline || st.label)}</span>${o.trigger==='dry_run'?'<span class="badge">dry run</span>':''}
       <span class="oc-sum">${esc(r.summary || (busy ? 'Waiting for the run to finish…' : ''))}</span>
       ${busy ? '' : `<a href="#" class="oc-again" onclick="reverifyOutcome(${o.id});return false">verify again</a>`}
     </div>
     ${r.note ? `<div class="oc-note">${esc(r.note)}</div>` : ''}
-    ${o.status === 'needs_you' && o.needs_you_reason ? `<div class="oc-needs"><b>Needs you:</b> ${esc(o.needs_you_reason)}</div>` : ''}
+    ${o.status === 'needs_you' ? `<div class="oc-needs"><b>Needs you:</b> ${esc(o.needs_you_reason||'the engine stopped and is waiting for you')}
+      <div class="ny-actions" style="margin-top:8px"><input type="text" class="modal-input" id="ocMsg${o.id}" placeholder="Answer the agent (optional)…" maxlength="2000">
+        <button class="sm" onclick="resolveOutcome(${o.id},'retry')">Retry</button>
+        <button class="ghost sm" onclick="resolveOutcome(${o.id},'dismiss')">Dismiss</button></div></div>` : ''}
     ${o.status === 'recovering' && o.next_attempt_at ? `<div class="oc-note">Next attempt ${esc(_ocTime(o.next_attempt_at))}</div>` : ''}
     ${checks ? `<ul class="oc-checks">${checks}</ul>` : ''}
     ${(r.attempt_log||[]).length ? `<ol class="oc-steps">${r.attempt_log.map(e => `<li>
@@ -2070,6 +2123,232 @@ window.reverifyOutcome = async (oid) => {
     const o = await api('/api/outcomes/'+oid+'/verify', {method:'POST'});
     toast(o.status==='delivered' ? 'Verified' : 'Verification failed', o.status==='delivered' ? 'ok' : 'err');
   } catch(e){ toast(e.detail||e.message||'error','err'); }
+  if (CURRENT_TASK_ID) openTask(CURRENT_TASK_ID);
+};
+
+// ---- definition of done: describe → draft → review → test / dry run → publish ----
+let DOD = null;   // {agentId, name, draft:{objective,checks,deliver_to,budget}, notes, warnings, context, pollT}
+const _DOD_TPL = {
+  sql: {kind:'sql', name:'Rows written today', required:true,
+        config:{connection_id:null, query:"SELECT count(*) FROM my_table WHERE created_at::date = '{date}'", expect:'>= 1'}},
+  artifact: {kind:'artifact', name:'Report file updated', required:true,
+        config:{path:'output/report.md', non_empty:true, modified_since_start:true}},
+};
+function _dodCheckSummary(c){
+  const k = c.config || {};
+  if (c.kind === 'sql') return `${k.expect ? 'expects '+k.expect : 'no expectation'} · data source #${k.connection_id ?? '?'}`;
+  const bits = ['non_empty','modified_since_start','ts_after_start'].filter(x => k[x]).map(x => x.replace(/_/g,' '));
+  if (k.contains) bits.push(`contains "${k.contains}"`);
+  if (k.last_line_matches) bits.push('last line matches');
+  if (k.line_regex) bits.push('timestamped line');
+  return `${k.path || '?'}${bits.length ? ' · '+bits.join(', ') : ''}`;
+}
+window.openDod = async (agentId) => {
+  let t; try { t = await api('/api/agents/'+agentId); } catch(e){ toast(e.detail||e.message||'error','err'); return; }
+  clearTimeout(DOD && DOD.pollT);
+  DOD = {agentId, name:t.name, draft:null, notes:'', warnings:[], context:null};
+  if (t.spec) DOD.draft = {objective:t.spec.objective||'',
+    checks:(t.spec.checks||[]).map(c => ({kind:c.kind, name:c.name, config:c.config||{}, required:c.required!==false})),
+    deliver_to:t.spec.deliver_to||[{kind:'notify'}], budget:t.spec.budget||{max_attempts:3},
+    status:t.spec.status, version:t.spec.version};
+  $('#dodFor').textContent = t.name;
+  _dodRender();
+  $('#dodModal').style.display = 'flex';
+};
+window.closeDod = () => { if (DOD) clearTimeout(DOD.pollT); $('#dodModal').style.display = 'none'; };
+function _dodDescribeHtml(){
+  return `<p class="dod-lead">Describe the outcome you need from <b>${esc(DOD.name)}</b> — what has to be true when the job is really done.
+    The planner looks at this routine's instructions, its recent runs, its workspace files and the schema of your data sources,
+    then proposes checks that are run independently after every run.</p>
+    <textarea id="dodDesc" class="modal-input" rows="4" placeholder="e.g. Every morning, fresh prices for all three retailers are in price_facts for today, and the team gets a summary."></textarea>
+    <div class="modal-actions" style="justify-content:flex-start;margin-top:var(--sp-3)">
+      <button id="dodDraftBtn" onclick="dodDraft()">Draft checks</button>
+      ${DOD.draft ? '<button class="ghost" onclick="dodBackToForm()">Back to the current definition</button>' : '<button class="ghost" onclick="dodBlank()">Write it myself</button>'}
+    </div><div id="dodOut" class="dod-out"></div>`;
+}
+function _dodRender(view){
+  const b = $('#dodBody');
+  if (!DOD.draft || view === 'describe'){ b.innerHTML = _dodDescribeHtml(); return; }
+  const d = DOD.draft;
+  const checks = d.checks.map((c,i) => `<div class="dod-check" data-i="${i}">
+      <div class="dod-crow"><span class="dod-kind">${c.kind==='sql'?'SQL':'file'}</span>
+        <input type="text" class="modal-input dod-cname" value="${esc(c.name)}" aria-label="Check name">
+        <label class="dod-sum" title="A failed required check means the outcome isn't done"><input type="checkbox" class="dod-creq" ${c.required?'checked':''}> required</label>
+        <button class="ghost dod-x" onclick="dodRemoveCheck(${i})" aria-label="Remove check">✕</button></div>
+      <div class="dod-sum">${esc(_dodCheckSummary(c))}</div>
+      <details><summary>Edit configuration</summary>
+        <textarea class="modal-input dod-ccfg" spellcheck="false">${esc(JSON.stringify(c.config, null, 2))}</textarea></details>
+      <div class="dod-res" id="dodRes${i}"></div>
+    </div>`).join('') || '<div class="dod-note">No checks yet. Add at least one — without a check nothing can be verified.</div>';
+  const dests = d.deliver_to.map((x,i) => `<span class="oc-dchip">${esc(_dest(x))}
+      <a href="#" onclick="dodRemoveDest(${i});return false" aria-label="Remove">✕</a></span>`).join('');
+  const bud = d.budget || {};
+  b.innerHTML = `
+    ${d.status ? `<p class="dod-lead">Version ${d.version} · ${d.status==='published'?'live — every run is verified against it':'draft — not live yet'}.
+      <a href="#" onclick="dodDescribe();return false">Re-draft from a description</a></p>` : ''}
+    ${DOD.notes ? `<div class="dod-note"><b>Planner notes:</b> ${esc(DOD.notes)}</div>` : ''}
+    ${(DOD.warnings||[]).map(w => `<div class="dod-warn">⚠ ${esc(w)}</div>`).join('')}
+    <div class="dod-sec"><label class="fld-label" for="dodObj">Objective</label>
+      <textarea id="dodObj" class="modal-input" rows="2">${esc(d.objective)}</textarea></div>
+    <div class="dod-sec"><span class="fld-label">Checks — run read-only after the agent finishes</span>
+      <div id="dodChecks">${checks}</div>
+      <div class="oc-cta" style="margin-top:8px"><button class="ghost sm" onclick="dodAddCheck('sql')">+ SQL check</button>
+        <button class="ghost sm" onclick="dodAddCheck('artifact')">+ File check</button></div></div>
+    <div class="dod-sec"><span class="fld-label">Deliver to — sent once, only after the checks pass</span>
+      <div class="oc-dl">${dests || '<span class="dod-sum">nowhere yet</span>'}</div>
+      <div class="oc-cta" style="margin-top:8px">
+        <select id="dodDestKind" class="modal-input" style="width:auto">
+          <option value="notify">In-app notification</option><option value="slack">Slack channel</option>
+          <option value="email">Email</option><option value="webhook">Webhook</option><option value="data">Data (written by the agent)</option></select>
+        <input id="dodDestVal" type="text" class="modal-input" style="flex:1;min-width:160px" placeholder="#channel, address, URL or label">
+        <button class="ghost sm" onclick="dodAddDest()">Add</button></div></div>
+    <div class="dod-sec"><span class="fld-label">Budget</span>
+      <div class="dod-grid">
+        <label>Attempts <input id="dodAtt" type="number" min="1" max="5" class="modal-input" style="width:80px" value="${bud.max_attempts||3}"></label>
+        <label>Max spend $ <input id="dodCost" type="number" min="0" step="0.5" class="modal-input" style="width:100px" value="${bud.max_cost_usd ?? ''}" placeholder="none"></label>
+      </div></div>
+    <div class="modal-actions" style="margin-top:var(--sp-4);flex-wrap:wrap">
+      <button class="ghost" onclick="dodTest()">Test checks now</button>
+      <button class="ghost" onclick="dodDryRun()">Dry run</button>
+      <button onclick="dodPublish()">Publish</button>
+    </div>
+    <div id="dodOut" class="dod-out"></div>`;
+}
+// read the form back into DOD.draft; returns false (and says why) on bad JSON
+function _dodSync(){
+  const d = DOD.draft; if (!d || !$('#dodObj')) return true;
+  d.objective = $('#dodObj').value.trim();
+  for (const el of document.querySelectorAll('#dodChecks .dod-check')){
+    const c = d.checks[+el.dataset.i];
+    c.name = el.querySelector('.dod-cname').value.trim() || c.name;
+    c.required = el.querySelector('.dod-creq').checked;
+    try { c.config = JSON.parse(el.querySelector('.dod-ccfg').value); }
+    catch(e){ toast(`"${c.name}": configuration isn't valid JSON`, 'err'); return false; }
+  }
+  const att = parseInt($('#dodAtt').value, 10), cost = parseFloat($('#dodCost').value);
+  d.budget = {max_attempts: Math.max(1, Math.min(5, att || 3)), ...(cost > 0 ? {max_cost_usd: cost} : {})};
+  return true;
+}
+function _dodBody(publish){
+  const d = DOD.draft;
+  return {objective:d.objective, checks:d.checks, deliver_to:d.deliver_to, budget:d.budget, publish:!!publish};
+}
+window.dodDescribe = () => { _dodSync(); _dodRender('describe'); };
+window.dodBackToForm = () => _dodRender();
+window.dodBlank = () => { DOD.draft = {objective:'', checks:[], deliver_to:[{kind:'notify'}], budget:{max_attempts:3}}; _dodRender(); };
+window.dodAddCheck = (k) => { if (!_dodSync()) return; DOD.draft.checks.push(JSON.parse(JSON.stringify(_DOD_TPL[k]))); _dodRender(); };
+window.dodRemoveCheck = (i) => { if (!_dodSync()) return; DOD.draft.checks.splice(i,1); _dodRender(); };
+window.dodRemoveDest = (i) => { if (!_dodSync()) return; DOD.draft.deliver_to.splice(i,1); _dodRender(); };
+window.dodAddDest = () => {
+  if (!_dodSync()) return;
+  const k = $('#dodDestKind').value, v = $('#dodDestVal').value.trim();
+  const d = k==='notify' ? {kind:'notify'} : k==='slack' ? {kind:'slack', channel:v} : k==='email' ? {kind:'email', to:v}
+          : k==='webhook' ? {kind:'webhook', url:v} : {kind:'data', label:v};
+  if (k !== 'notify' && !v){ toast('Fill in where to deliver it', 'err'); return; }
+  if (k === 'notify' && DOD.draft.deliver_to.some(x => x.kind==='notify')) return;
+  DOD.draft.deliver_to.push(d); _dodRender();
+};
+window.dodDraft = async () => {
+  const desc = ($('#dodDesc').value||'').trim();
+  if (desc.length < 5){ toast('Describe the outcome first', 'err'); return; }
+  const btn = $('#dodDraftBtn'); btn.disabled = true; btn.textContent = 'Drafting…';
+  $('#dodOut').innerHTML = '<div class="dod-note">Reading the routine, its recent runs, workspace files and data-source schema… this takes up to a minute.</div>';
+  try {
+    const r = await api(`/api/agents/${DOD.agentId}/spec/draft`, {method:'POST', body:JSON.stringify({description:desc})});
+    DOD.draft = r.draft; DOD.notes = r.notes; DOD.warnings = r.warnings || []; DOD.context = r.context;
+    const cx = r.context || {};
+    DOD.notes = [r.notes, `Grounded on ${cx.runs_seen||0} recent run(s), ${cx.files_seen||0} workspace file(s)${(cx.data_sources||[]).length?', data sources: '+cx.data_sources.join(', '):''}.`].filter(Boolean).join(' ');
+    _dodRender();
+  } catch(e){
+    btn.disabled = false; btn.textContent = 'Draft checks';
+    $('#dodOut').innerHTML = `<div class="dod-warn">${esc(e.detail||e.message||'error')}</div>`;
+  }
+};
+function _dodResults(results){
+  results.forEach((r,i) => {
+    const el = $('#dodRes'+i); if (!el) return;
+    el.className = 'dod-res ' + (r.passed ? 'pass' : 'fail');
+    el.textContent = `${r.passed?'✓ passes':'✗ fails'} · observed ${_ocVal(r.observed)}${r.expected?' · expected '+r.expected:''}${r.error?' · '+r.error:''}`;
+  });
+}
+window.dodTest = async () => {
+  if (!_dodSync()) return;
+  if (!DOD.draft.checks.length){ toast('Add a check first', 'err'); return; }
+  $('#dodOut').innerHTML = '<div class="dod-note">Running the checks read-only against the latest run…</div>';
+  try {
+    const r = await api(`/api/agents/${DOD.agentId}/spec/test-checks`, {method:'POST', body:JSON.stringify({checks:DOD.draft.checks})});
+    _dodResults(r.results || []);
+    $('#dodOut').innerHTML = `<div class="dod-note">${r.passed ? '✓ All required checks pass' : '✗ Some required checks fail'}
+      against ${r.against_run ? 'run #'+r.against_run : 'no run yet'} (date ${esc(r.date)}). Nothing was changed.</div>`;
+  } catch(e){ $('#dodOut').innerHTML = `<div class="dod-warn">${esc(e.detail||e.message||'error')}</div>`; }
+};
+window.dodDryRun = async () => {
+  if (!_dodSync()) return;
+  if (!await confirmDialog('Run the routine once for real against this draft? Checks are verified, but nothing is delivered or retried, and the draft is not published.', {confirmText:'Start dry run'})) return;
+  try {
+    const r = await api(`/api/agents/${DOD.agentId}/spec/dry-run`, {method:'POST', body:JSON.stringify(_dodBody(false))});
+    DOD.dryOutcome = r.outcome_id;
+    $('#dodOut').innerHTML = `<div class="dod-note" id="dodDry">Dry run started (run #${r.run_id}). You can close this window; the result also shows in the routine's outcome history.</div>`;
+    _dodPoll(r.outcome_id);
+  } catch(e){ $('#dodOut').innerHTML = `<div class="dod-warn">${esc(e.detail||e.message||'error')}</div>`; }
+};
+async function _dodPoll(oid){
+  if (!DOD || DOD.dryOutcome !== oid || $('#dodModal').style.display !== 'flex') return;
+  let o; try { o = await api('/api/outcomes/'+oid); } catch(e){ return; }
+  const box = $('#dodDry'); if (!box) return;
+  if (['running','verifying'].includes(o.status)){
+    box.textContent = `Dry run ${o.status}… (outcome #${oid})`;
+    DOD.pollT = setTimeout(() => _dodPoll(oid), 5000); return;
+  }
+  const r = o.receipt || {};
+  _dodResults(r.checks || []);
+  box.innerHTML = `<b>${o.status==='delivered' ? '✓ Dry run verified' : '✗ Dry run not verified'}</b> — ${esc(r.summary||r.headline||'')}
+    ${r.delivery_preview ? `<div class="fld-label" style="margin-top:8px">This is what would have been delivered</div><div class="dod-preview">${esc(r.delivery_preview)}</div>` : ''}`;
+  if (CURRENT_TASK_ID === DOD.agentId) openTask(DOD.agentId);
+}
+window.dodPublish = async () => {
+  if (!_dodSync()) return;
+  const d = DOD.draft;
+  if (!d.objective){ toast('Write the objective', 'err'); return; }
+  if (!d.checks.length){ toast('Add at least one check', 'err'); return; }
+  try {
+    const r = await api(`/api/agents/${DOD.agentId}/spec`, {method:'PUT', body:JSON.stringify(_dodBody(true))});
+    toast(`Definition of done v${r.spec.version} is live`, 'ok');
+    closeDod();
+    if (CURRENT_TASK_ID === DOD.agentId) openTask(DOD.agentId);
+    loadTasks();
+  } catch(e){ $('#dodOut').innerHTML = `<div class="dod-warn">${esc(e.detail||e.message||'error')}</div>`; }
+};
+
+// ---- needs-you inbox: outcomes the engine can't finish without a person ----
+const _NY_CLASS = {auth:'a connection needs reconnecting', blocked:'the agent is blocked', provider_limit:'model usage limit',
+  check_failed:'checks kept failing', run_failed:'the run kept failing', timeout:'kept timing out', oom:'ran out of memory'};
+function renderNeedsYou(){
+  const p = $('#needsYouPanel'); if (!p) return;
+  const items = LIVE.needs_you || [];
+  if (!items.length){ p.style.display = 'none'; return; }
+  p.style.display = '';
+  $('#needsYouList').innerHTML = items.map(n => `<div class="ny-item">
+      <div><a href="#" class="ny-name" onclick="gotoRoutine(${n.agent_id});return false">${esc(n.name)}</a>
+        <span class="dod-sum"> · ${esc(_NY_CLASS[n.class] || n.class || 'stopped')} · ${n.attempts||0} attempt${n.attempts===1?'':'s'} · ${esc(_ocTime(n.at))}</span></div>
+      <div class="ny-reason">${esc(n.reason || 'The engine stopped and is waiting for you.')}</div>
+      <div class="ny-actions">
+        ${n.class==='auth' ? `<button class="ghost sm" onclick="showView('connectors')">Open connectors</button>` : ''}
+        <input type="text" class="modal-input" id="nyMsg${n.outcome_id}" placeholder="Answer the agent (optional)…" maxlength="2000">
+        <button class="sm" onclick="resolveOutcome(${n.outcome_id},'retry')">Retry</button>
+        <button class="ghost sm" onclick="resolveOutcome(${n.outcome_id},'dismiss')">Dismiss</button>
+      </div></div>`).join('');
+}
+window.resolveOutcome = async (oid, action) => {
+  const inp = $('#nyMsg'+oid) || $('#ocMsg'+oid);
+  const msg = inp ? inp.value.trim() : '';
+  if (action === 'retry' && msg) action = 'answer';
+  if (action === 'dismiss' && !await confirmDialog("Dismiss this outcome? It's marked not done and nothing more is tried.", {confirmText:'Dismiss'})) return;
+  try {
+    await api('/api/outcomes/'+oid+'/resolve', {method:'POST', body:JSON.stringify({action, ...(msg ? {message:msg} : {})})});
+    toast(action === 'dismiss' ? 'Dismissed' : 'Retrying now', 'ok');
+  } catch(e){ toast(e.detail||e.message||'error','err'); }
+  await loadLive();
   if (CURRENT_TASK_ID) openTask(CURRENT_TASK_ID);
 };
 
@@ -3018,7 +3297,10 @@ async function loadLive(){
   const ls = $('#liveStatus');
   if (ls){
     ls.classList.remove('err');
-    if (d.running_count>0){ ls.style.display=''; ls.innerHTML = '<span class="lpdot"></span>'+d.running_count+' running'; }
+    const ny = (d.needs_you||[]).length;
+    if (ny){ ls.style.display=''; ls.classList.add('err');
+      ls.innerHTML = '<span class="lpdot err"></span>'+ny+' need'+(ny===1?'s':'')+' you'+(d.running_count>0?' · '+d.running_count+' running':''); }
+    else if (d.running_count>0){ ls.style.display=''; ls.innerHTML = '<span class="lpdot"></span>'+d.running_count+' running'; }
     else if (d.broken && d.broken.length){ ls.style.display=''; ls.classList.add('err');
       ls.innerHTML = '<span class="lpdot err"></span>'+d.broken.length+' need'+(d.broken.length===1?'s':'')+' attention'; }
     else { ls.style.display='none'; }
@@ -3026,6 +3308,7 @@ async function loadLive(){
   const nr = $('#navRoutines');
   if (nr){ if (d.running_count>0){ nr.textContent=d.running_count; nr.style.display=''; } else { nr.style.display='none'; } }
   renderWelcomeLive();
+  renderNeedsYou();
 }
 function _elapsed(iso){
   if(!iso) return '';
