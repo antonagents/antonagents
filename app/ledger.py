@@ -50,7 +50,8 @@ async def build(org_id: int, days: int = 30) -> dict:
         o["has_usage"] = bool(o["runs"]) and all(r["usage_json"] for r in o["runs"])
 
     def roll(group: list[dict]) -> dict:
-        by = {s: 0 for s in ("delivered", "failed", "needs_you", "recovering", "running", "verifying")}
+        by = {s: 0 for s in ("delivered", "failed", "needs_you", "awaiting_approval",
+                             "recovering", "running", "verifying")}
         for o in group:
             by[o["status"]] = by.get(o["status"], 0) + 1
         delivered = [o for o in group if o["status"] == "delivered"]
@@ -78,6 +79,13 @@ async def build(org_id: int, days: int = 30) -> dict:
             "tokens_per_verified": (round(sum(o["tokens"] for o in tok) / len(good))
                                     if good and tok and len(tok) == len(group) else None),
             "live_outcomes": len(live),
+            # step 6: how each verified outcome was proven, and the spot-check sample
+            "by_strength": {k: sum(1 for o in good if (o["strength"] or "verified") == k)
+                            for k in ("verified", "judged", "accepted")},
+            "spot_checks": {"requested": sum(1 for o in group if o["review_requested_at"]),
+                            "reviewed": sum(1 for o in group if o["review_requested_at"] and o["reviewed_at"]),
+                            "rejected": sum(1 for o in group if o["review_requested_at"]
+                                            and o["review_verdict"] == "wrong")},
         }
 
     total = roll(outs)

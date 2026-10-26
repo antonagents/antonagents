@@ -176,3 +176,10 @@ OPERATOR_EMAILS = {
     for e in os.environ.get("SUPERAGENT_OPERATORS", "").split(",")
     if e.strip()
 }
+
+
+# Outcome judges (app/verify.py): which provider/model scores qualitative checks.
+# Defaults to the routed default provider; set a different one to avoid a model
+# grading its own work.
+JUDGE_PROVIDER = os.environ.get("SUPERAGENT_JUDGE_PROVIDER") or None
+JUDGE_MODEL = os.environ.get("SUPERAGENT_JUDGE_MODEL") or None

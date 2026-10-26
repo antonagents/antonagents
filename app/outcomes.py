@@ -12,6 +12,7 @@ import asyncio
 import datetime
 import json
 import logging
+import random
 import re
 from typing import Optional
 
@@ -29,7 +30,19 @@ def _now() -> str:
 
 def prompt_addendum(spec: dict, outcome_id: Optional[int] = None) -> str:
     """Tell the agent the definition of done and ask for a delivery manifest."""
-    checks = "\n".join(f"- {c['name']}" for c in spec["checks"])
+    lines = []
+    for c in spec["checks"]:
+        cfg = c.get("config") or {}
+        if c["kind"] == "judge":      # the definition of done isn't secret: say what's judged
+            lines.append(f"- {c['name']} (an independent reviewer checks: "
+                         + "; ".join(cfg.get("rubric") or []) + ")")
+        elif c["kind"] == "human":
+            lines.append(f"- {c['name']} (a person "
+                         + ("approves it before anything is delivered)" if cfg.get("mode") == "approve"
+                            else "spot-checks some outcomes)"))
+        else:
+            lines.append(f"- {c['name']}")
+    checks = "\n".join(lines)
     dests = deliver.message_destinations(spec)
     delivery = ""
     if dests and outcome_id:
@@ -126,7 +139,10 @@ def _receipt(o: dict, spec: dict, results: list[dict], run: Optional[dict],
         "strength": strength if delivered else None, "summary": summary, "note": note,
         "objective": spec.get("objective"),
         "checks": [{"name": r["name"], "passed": r["passed"], "observed": r.get("observed"),
-                    "expected": r.get("expected"), "required": r["required"]} for r in results],
+                    "expected": r.get("expected"), "required": r["required"],
+                    "kind": r.get("kind"), "strength": r.get("strength"),
+                    **({"criteria": r["criteria"]} if r.get("criteria") else {}),
+                    **({"pending": True} if r.get("pending_human") else {})} for r in results],
         "attempts": o.get("attempts"),
         "run_id": run and run.get("id"), "run_status": run and run.get("status"),
         "runtime_s": run and _secs(run.get("started_at"), run.get("finished_at")),
@@ -161,11 +177,33 @@ async def verify_outcome(outcome_id: int, attempt: Optional[int] = None,
         "outcome_start": start,
         "outcome_end": (run and run.get("finished_at")) or None,
         "org_id": o["org_id"], "agent_id": o["agent_id"],
+        # step 6: what a judge reads
+        "outcome_id": outcome_id, "objective": spec.get("objective"),
+        "result": _MANIFEST.sub("", (run and run.get("result")) or "").strip(),
     }
-    results = await verify.run_checks(spec["checks"], ctx)
+    gated = o.get("trigger") not in ("backfill", "dry_run")   # people only review live outcomes
+    auto = [c for c in spec["checks"] if c["kind"] != "human"]
+    humans = [c for c in spec["checks"] if c["kind"] == "human"]
+    results = await verify.run_checks(auto, ctx)
+    approved = next((e for e in o["recovery"] if e.get("action") == "approved"
+                     and e.get("attempt") == attempt), None)
+    for h in humans:
+        mode = (h.get("config") or {}).get("mode")
+        base = {"check_id": h.get("id"), "name": h["name"], "kind": "human", "strength": "accepted"}
+        if mode == "approve" and gated:
+            results.append({**base, "required": True, "passed": bool(approved),
+                            "observed": approved["label"] if approved else "waiting for approval",
+                            "expected": "approved by an owner", "pending_human": not approved})
+        else:   # spot-checks never block; gates are skipped for backfills and dry runs
+            results.append({**base, "required": False, "passed": True,
+                            "observed": "sampled after delivery" if mode == "sample" else
+                            f"skipped ({o.get('trigger')})", "expected": "spot-check"
+                            if mode == "sample" else "approved by an owner"})
     await db.replace_check_results(outcome_id, attempt, results)
 
     required = [r for r in results if r["required"]]
+    auto_ok = all(r["passed"] for r in required if not r.get("pending_human"))
+    waiting = auto_ok and any(r.get("pending_human") for r in required)
     delivered = bool(required) and all(r["passed"] for r in required)
     strength = max((r["strength"] for r in required),
                    key=lambda s: _STRENGTH_RANK.get(s, 9), default="verified")
@@ -174,23 +212,55 @@ async def verify_outcome(outcome_id: int, attempt: Optional[int] = None,
     cost = await db.outcome_cost(outcome_id)
 
     preview = None
-    if o.get("trigger") == "dry_run" and deliver.message_destinations(spec):
+    if (o.get("trigger") == "dry_run" or waiting) and deliver.message_destinations(spec):
         try:
             agent_ = await db.get_agent(o["agent_id"])
             msg = await deliver._read_outbox(o["agent_id"], outcome_id)
             preview = deliver.compose({**o, "manifest": manifest, "receipt": {}}, agent_ or {}, msg)["plain"]
         except Exception:  # noqa: BLE001
             log.exception("could not build the dry-run delivery preview")
+    if waiting:
+        # step 6: the automatic checks passed; an owner approves before anything is sent
+        receipt = _receipt(o, spec, results, run, False, strength)
+        auto_n = sum(1 for r in required if not r.get("pending_human"))
+        receipt.update({"headline": "Awaiting approval", "status": "awaiting_approval", "note": None,
+                        "summary": (f"All {auto_n} automatic check{'s' if auto_n != 1 else ''} passed. "
+                                    "Nothing is delivered until an owner approves it."),
+                        "attempt_log": o["recovery"]})
+        if preview:
+            receipt["delivery_preview"] = preview
+        await db.update_outcome(
+            outcome_id, status="awaiting_approval", finished_at=None, next_attempt_at=None,
+            needs_you_reason=None, receipt_json=json.dumps(receipt), cost_usd=cost,
+            manifest_json=json.dumps(manifest) if manifest else None)
+        if prev_status != "awaiting_approval":
+            agent = await db.get_agent(o["agent_id"])
+            try:
+                await db.add_notification(o["org_id"], o["agent_id"], run and run.get("id"),
+                                          f"Approve: {(agent or {}).get('name', 'routine')}",
+                                          receipt["summary"])
+            except Exception:  # noqa: BLE001
+                log.exception("could not add approval notification")
+        return await db.get_outcome(outcome_id)
     if delivered:
         receipt = _receipt(o, spec, results, run, True, strength)
         receipt["attempt_log"] = o["recovery"]
+        if approved:
+            receipt["summary"] = f"{approved['label']}. " + receipt["summary"]
         if preview:
             receipt["delivery_preview"] = preview
+        # step 6: a sampled share of live outcomes is queued for a person to spot-check
+        sample = next(((h.get("config") or {}).get("rate") for h in humans
+                       if (h.get("config") or {}).get("mode") == "sample"), None)
+        spot = {}
+        if (sample and gated and prev_status != "delivered" and not o.get("review_requested_at")
+                and random.random() < float(sample)):
+            spot = {"review_requested_at": now}
         await db.update_outcome(
             outcome_id, status="delivered", finished_at=now, verified_at=now,
             next_attempt_at=None, needs_you_reason=None,
             receipt_json=json.dumps(receipt), cost_usd=cost,
-            manifest_json=json.dumps(manifest) if manifest else None)
+            manifest_json=json.dumps(manifest) if manifest else None, **spot)
         # step 3: only now — verified — does anything reach the team (exactly once)
         try:
             await deliver.deliver_outcome(outcome_id)
@@ -210,7 +280,11 @@ async def verify_outcome(outcome_id: int, attempt: Optional[int] = None,
             manifest_json=json.dumps(manifest) if manifest else None)
         return await db.get_outcome(outcome_id)
 
-    decision = await _decide(o, spec, run, results, manifest, cost)
+    failing = [r for r in required if not r["passed"] and not r.get("pending_human")]
+    if failing and all(r.get("unavailable") for r in failing):
+        decision = _reverify(o, results)
+    else:
+        decision = await _decide(o, spec, run, results, manifest, cost)
     log_ = o["recovery"] + [decision["entry"]]
     receipt.update(decision["receipt"])
     receipt["attempt_log"] = log_
@@ -259,6 +333,7 @@ LABELS = {
     "interrupted": "Interrupted by a server restart",
     "check_failed": "Finished, but verification failed",
     "run_failed": "The run failed",
+    "verifier_error": "The judge model was unavailable",
 }
 
 # seconds to wait before the next attempt, by how many times this class recurred
@@ -303,9 +378,12 @@ def recovery_note(cls: str, attempt: int, max_attempts: int, detail: str,
                        f"{f' after {secs // 60} minutes' if secs else ''}. Check what already "
                        "completed and finish the rest instead of redoing everything.")
     if cls == "check_failed":
-        bad = [r for r in results if r["required"] and not r["passed"]]
+        bad = [r for r in results if r["required"] and not r["passed"] and not r.get("pending_human")]
         lines = "\n".join(f"- {r['name']}: observed {r.get('observed') or '—'}, "
-                          f"expected {r.get('expected') or '—'}" for r in bad)
+                          f"expected {r.get('expected') or '—'}"
+                          + "".join(f"\n    not met: {k['criterion']} — {k['why']}"
+                                    for k in r.get("criteria") or [] if not k["met"])
+                          for r in bad)
         return head + ("The previous attempt finished, but independent verification "
                        f"failed:\n{lines}\nFind out why and make these checks pass.")
     if cls == "oom":
@@ -317,6 +395,33 @@ def recovery_note(cls: str, attempt: int, max_attempts: int, detail: str,
     if cls == "interrupted":
         return head + "The previous attempt was interrupted by a server restart. Start again."
     return head + f"The previous attempt failed: {detail}. Investigate the cause and retry."
+
+
+_REVERIFY_S = [300, 900, 1800]
+
+
+def _reverify(o: dict, results: list[dict]) -> dict:
+    """The verifier itself (a judge model) was unavailable: the agent's work may be
+    fine, so check again later instead of redoing the job."""
+    streak = 0
+    for e in reversed(o["recovery"]):
+        if e.get("action") != "reverify" or e.get("class") == "user":
+            break                                  # a person asking again resets the streak
+        streak += 1
+    names = ", ".join(r["name"] for r in results if r.get("unavailable"))
+    entry = {"attempt": o["attempts"] or 1, "class": "verifier_error", "label": LABELS["verifier_error"],
+             "detail": names, "at": _now()}
+    if streak >= len(_REVERIFY_S):
+        entry["action"] = "needs_you"
+        reason = f"The judge model stayed unavailable, so {names} couldn't be checked. Retry later."
+        return {"status": "needs_you", "needs_you_reason": reason, "entry": entry,
+                "receipt": {"headline": "Needs you", "status": "needs_you", "summary": reason}}
+    nxt = _iso_in(_REVERIFY_S[streak])
+    entry.update({"action": "reverify", "next_attempt_at": nxt})
+    return {"status": "recovering", "next_attempt_at": nxt, "entry": entry,
+            "receipt": {"headline": "Recovering", "status": "recovering",
+                        "summary": f"The judge was unavailable — checking again in "
+                                   f"{_REVERIFY_S[streak] // 60} min (the job is not re-run)."}}
 
 
 def _iso_in(seconds: int) -> str:
@@ -331,6 +436,10 @@ async def _decide(o: dict, spec: dict, run: Optional[dict], results: list[dict],
     max_attempts = int(budget.get("max_attempts") or DEFAULT_MAX_ATTEMPTS)
     max_cost = budget.get("max_cost_usd")
     attempt = o["attempts"] or 1
+    # a person stepping in (retry, answer, request changes) starts a fresh attempt
+    # budget from that point; the cost cap still covers the whole outcome
+    base = max((e.get("attempt") or 0 for e in o["recovery"] if e.get("class") == "user"), default=0)
+    used = attempt - base
     cls, detail = classify(run, manifest)
     label = LABELS[cls]
     entry = {"attempt": attempt, "class": cls, "label": label, "detail": detail,
@@ -353,7 +462,7 @@ async def _decide(o: dict, spec: dict, run: Optional[dict], results: list[dict],
     if cls == "auth":
         return needs_you("A connected account or credential was rejected — reconnect it, "
                          f"then retry. ({detail[:120]})")
-    if attempt >= max_attempts:
+    if used >= max_attempts:
         return give_up(f"{label.lower()} (budget: {max_attempts} attempts)")
     if max_cost is not None and cost >= float(max_cost):
         return give_up(f"cost budget of ${float(max_cost):.2f} reached")
@@ -372,7 +481,7 @@ async def _decide(o: dict, spec: dict, run: Optional[dict], results: list[dict],
     wait = delays[min(len(previous), len(delays) - 1)]
     nxt = _iso_in(wait)
     entry.update({"action": "retry", "next_attempt_at": nxt, "memory": memory,
-                  "note": recovery_note(cls, attempt + 1, max_attempts, detail, results,
+                  "note": recovery_note(cls, used + 1, max_attempts, detail, results,
                                         run, memory)})
     when = f"in {wait // 60} min" if wait >= 60 else "shortly"
     return {"status": "recovering", "next_attempt_at": nxt, "entry": entry,
@@ -406,6 +515,10 @@ async def recovery_loop() -> None:
         try:
             for o in await db.due_recoveries():
                 try:
+                    if (o["recovery"] or [{}])[-1].get("action") == "reverify":
+                        await db.update_outcome(o["id"], status="verifying", next_attempt_at=None)
+                        asyncio.create_task(verify_outcome(o["id"], attempt=o["attempts"] or 1))
+                        continue
                     await _launch_next_attempt(o)
                 except Exception:  # noqa: BLE001
                     log.exception("could not launch recovery for outcome %s", o["id"])
@@ -450,6 +563,86 @@ async def resume_pending() -> None:
 
 # ---------------- needs-you actions (step 4) ----------------
 
+async def review(outcome_id: int, decision: str, note: Optional[str], reviewer: str) -> dict:
+    """A person's verdict (step 6). On an outcome awaiting approval: approve (then
+    deliver), changes (retry with the note) or reject. On a delivered outcome picked
+    for a spot-check: approve or reject (rejecting marks it wrong)."""
+    o = await db.get_outcome(outcome_id)
+    if not o:
+        raise ValueError("outcome not found")
+    now, note = _now(), (note or "").strip()
+    if o["status"] == "delivered" and o.get("review_requested_at") and not o.get("reviewed_at"):
+        if decision not in ("approve", "reject"):
+            raise ValueError("a spot-check is approve or reject")
+        await db.update_outcome(outcome_id, reviewed_at=now, reviewed_by=reviewer,
+                                review_note=note or None,
+                                review_verdict="ok" if decision == "approve" else "wrong")
+        if decision == "reject":
+            await db.flag_outcome(outcome_id, note or f"rejected in a spot-check by {reviewer}")
+        return await db.get_outcome(outcome_id)
+    if o["status"] != "awaiting_approval":
+        raise ValueError("this outcome isn't waiting for a review")
+    attempt = o["attempts"] or 1
+    if decision == "approve":
+        entry = {"attempt": attempt, "class": "user", "label": f"Approved by {reviewer}",
+                 "detail": note[:300], "action": "approved", "at": now}
+        # finalize on the results the owner saw — automatic checks are not re-run
+        receipt = dict(o.get("receipt") or {})
+        checks = [dict(c) for c in receipt.get("checks") or []]
+        for c in checks:
+            if c.get("pending"):
+                c.update(passed=True, observed=entry["label"], pending=False)
+        required = [c for c in checks if c.get("required")]
+        strength = max((c.get("strength") or "verified" for c in required),
+                       key=lambda x: _STRENGTH_RANK.get(x, 9), default="accepted")
+        receipt.update({"headline": f"Delivered · {strength.capitalize()}", "status": "delivered",
+                        "strength": strength, "checks": checks, "verified_at": now,
+                        "summary": f"{entry['label']}"
+                                   + (f" — {note}" if note else "") + f". All {len(required)} "
+                                   f"required check{'s' if len(required) != 1 else ''} passed.",
+                        "attempt_log": o["recovery"] + [entry]})
+        receipt.pop("delivery_preview", None)
+        for r in o.get("check_results") or []:
+            if r["kind"] == "human" and r["attempt"] == attempt:
+                await db.mark_check_result(r["id"], passed=True, observed=entry["label"])
+        await db.update_outcome(outcome_id, status="delivered", finished_at=now, verified_at=now,
+                                recovery_json=json.dumps(o["recovery"] + [entry]),
+                                receipt_json=json.dumps(receipt), reviewed_at=now,
+                                reviewed_by=reviewer, review_note=note or None, review_verdict="ok")
+        try:
+            await deliver.deliver_outcome(outcome_id)
+        except Exception:  # noqa: BLE001
+            log.exception("delivery failed for outcome %s", outcome_id)
+        return await db.get_outcome(outcome_id)
+    if decision == "reject":
+        entry = {"attempt": attempt, "class": "user", "label": f"Rejected by {reviewer}",
+                 "detail": note[:300], "action": "rejected", "at": now}
+        receipt = dict(o.get("receipt") or {})
+        receipt.update({"headline": "Not delivered", "status": "failed",
+                        "summary": f"Rejected by {reviewer}" + (f": {note}" if note else "."),
+                        "attempt_log": o["recovery"] + [entry]})
+        await db.update_outcome(outcome_id, status="failed", finished_at=now,
+                                recovery_json=json.dumps(o["recovery"] + [entry]),
+                                receipt_json=json.dumps(receipt), reviewed_at=now,
+                                reviewed_by=reviewer, review_note=note or None,
+                                review_verdict="rejected")
+        return await db.get_outcome(outcome_id)
+    if decision != "changes":
+        raise ValueError("decision must be approve, changes or reject")
+    if not note:
+        raise ValueError("say what should change")
+    last_mem = next((r.get("memory") for r in reversed(o["runs"]) if r.get("memory")), None)
+    entry = {"attempt": attempt, "class": "user", "label": f"{reviewer} asked for changes",
+             "detail": note[:300], "action": "retry", "memory": last_mem, "next_attempt_at": now,
+             "note": ("RECOVERY — a person reviewed your output before delivery and asked for "
+                      f"changes: {note}\nRevise the output accordingly; everything else in the "
+                      "definition of done still applies."), "at": now}
+    await db.update_outcome(outcome_id, status="recovering", next_attempt_at=now,
+                            recovery_json=json.dumps(o["recovery"] + [entry]))
+    await _launch_next_attempt(await db.get_outcome(outcome_id))
+    return await db.get_outcome(outcome_id)
+
+
 async def resolve(outcome_id: int, action: str, message: Optional[str] = None) -> dict:
     """Answer a needs-you outcome: retry it, retry with the user's answer, or dismiss."""
     o = await db.get_outcome(outcome_id)
@@ -464,6 +657,13 @@ async def resolve(outcome_id: int, action: str, message: Optional[str] = None) -
         return await db.get_outcome(outcome_id)
     if action == "answer" and not (message or "").strip():
         raise ValueError("write an answer for the agent")
+    if action == "retry" and (o["recovery"] or [{}])[-1].get("class") == "verifier_error":
+        # the work may be fine — only the judge was down: check again, don't redo the job
+        entry = {"attempt": o["attempts"], "class": "user", "label": "You asked to check again",
+                 "action": "reverify", "at": now}
+        await db.update_outcome(outcome_id, status="verifying", needs_you_reason=None,
+                                finished_at=None, recovery_json=json.dumps(o["recovery"] + [entry]))
+        return await verify_outcome(outcome_id, attempt=o["attempts"] or 1)
     reason = o.get("needs_you_reason") or "a problem the agent couldn't fix on its own"
     note = ("RECOVERY — a person reviewed this job. "
             + (f"Their answer: {message.strip()}" if action == "answer" and message

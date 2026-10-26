@@ -1,6 +1,6 @@
 # Feature: Outcome Jobs (delegate the job, get the outcome)
 
-> Status: **steps 1–5 implemented** (2026-10-26).
+> Status: **all 6 steps implemented** (2026-10-26).
 > Step 1 — job specs, outcomes, independent `sql` + `artifact` verification,
 > receipts, console outcome card; live on agent 60 (first live verified outcome:
 > #3, 2026-10-25). Step 2 — recovery loop: failure classifier (blocked, auth,
@@ -40,7 +40,21 @@
 > when configured, else the SDK's Anthropic-list-price figure labelled
 > **estimate** (Anthropic routes count as metered). No prices are configured yet,
 > so GLM cost shows as an estimate.
-> Step 6 not started.
+> Step 6 — qualitative jobs: `judge` checks (a separate model call scores the
+> staged message, the agent's final answer or a workspace file against 1–10
+> criteria; every "met" criterion must quote evidence, and the engine verifies the
+> quote is really in the output and computes the score itself — the model's own
+> score is never used; output is fenced as data against prompt injection). Shown
+> as **Judged**. If the judge model is down, the outcome is re-checked at
+> 5/15/30 min — the job is not re-run — then escalated. `human` checks:
+> `approve` = after the automatic checks pass the outcome waits **Awaiting
+> approval** with a preview; Approve & send (→ **Accepted**, delivered once),
+> Request changes (note fed to a new attempt) or Reject; `sample` = a share of
+> delivered outcomes is queued for a spot-check, "Wrong" marks it wrong. The agent
+> now sees the judge rubric and approval gates in its definition of done; a
+> person stepping in starts a fresh attempt budget (cost cap still applies).
+> Judge model: `SUPERAGENT_JUDGE_PROVIDER` / `SUPERAGENT_JUDGE_MODEL` (default:
+> the default provider). Judge calls are not yet metered into outcome cost.
 > Positioning decision behind it: see `positioning` memory — "outcome-based, not
 > ask-and-it-does".
 
@@ -370,7 +384,9 @@ versions), provider-error surfacing, per-agent memory override, evals/scorers.
 2. How far do non-technical users go in authoring checks? (Proposed: the planner
    writes them; users edit in plain language.)
 3. Default budget (attempts / runtime / cost) per job type?
-4. Which model runs judges, and who pays for judge calls?
+4. Which model runs judges, and who pays for judge calls? (Now: configurable via
+   `SUPERAGENT_JUDGE_PROVIDER`; defaults to the default provider. Judge calls are
+   not yet counted in outcome cost.)
 5. Should unanswered escalations block later occurrences of the same job?
 6. Outcome-based pricing: in scope later, or never?
 

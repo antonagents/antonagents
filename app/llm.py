@@ -22,17 +22,19 @@ class LLMError(Exception):
     pass
 
 
-def _candidates() -> list:
-    first = providers.get(config.DEFAULT_PROVIDER)
+def _candidates(prefer: Optional[str] = None) -> list:
+    first = providers.get(prefer or config.DEFAULT_PROVIDER) or providers.get(config.DEFAULT_PROVIDER)
     rest = [p for p in providers.all() if p is not first]
     return [p for p in ([first] if first else []) + rest if p and providers.is_configured(p)]
 
 
 async def complete(system: str, user: str, *, max_tokens: int = 4000,
-                   timeout: float = 120) -> str:
-    """Return the text of one completion, trying providers in order."""
+                   timeout: float = 120, provider: Optional[str] = None,
+                   model: Optional[str] = None) -> str:
+    """Return the text of one completion, trying providers in order. `provider`
+    / `model` pick the first choice (e.g. a separate judge model)."""
     errors = []
-    for p in _candidates():
+    for p in _candidates(provider):
         base = (p.base_url or "https://api.anthropic.com").rstrip("/")
         tok = os.environ.get(p.auth_env, "")
         headers = {"anthropic-version": "2023-06-01", "content-type": "application/json"}
@@ -40,7 +42,8 @@ async def complete(system: str, user: str, *, max_tokens: int = 4000,
             headers["x-api-key"] = tok
         else:
             headers["authorization"] = f"Bearer {tok}"
-        body = {"model": p.default_model, "max_tokens": max_tokens, "system": system,
+        use = model if (model and provider == p.name) else p.default_model
+        body = {"model": use, "max_tokens": max_tokens, "system": system,
                 "messages": [{"role": "user", "content": user}]}
         try:
             async with httpx.AsyncClient(timeout=timeout) as c:

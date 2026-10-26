@@ -363,6 +363,9 @@ async def init() -> None:
     await _ensure_column("runs", "cost_basis", "TEXT")
     await _ensure_column("outcomes", "flagged_at", "TEXT")      # "this outcome was wrong"
     await _ensure_column("outcomes", "flag_note", "TEXT")
+    # human checks (step 6): approval gate + sampled spot-checks
+    for col in ("review_requested_at", "reviewed_at", "reviewed_by", "review_note", "review_verdict"):
+        await _ensure_column("outcomes", col, "TEXT")
     await _backfill_run_routes()
     # outcome recovery (step 2): when the next attempt is due + the attempt log
     await _ensure_column("outcomes", "next_attempt_at", "TEXT")
@@ -1201,7 +1204,7 @@ async def live_status(org_id: int) -> dict:
              -- not "broken" if the outcome engine is recovering it, verified it anyway,
              -- or is already asking the user (that shows up under needs_you instead)
              AND NOT EXISTS (SELECT 1 FROM outcomes o WHERE o.id = r.outcome_id
-                             AND o.status IN ('running','verifying','recovering','delivered','needs_you'))
+                             AND o.status IN ('running','verifying','recovering','delivered','needs_you','awaiting_approval'))
            ORDER BY r.id DESC LIMIT 6""", (org_id,))
     broken = [{"run_id": x["run_id"], "agent_id": x["agent_id"], "name": x["name"],
                "error": (x["error"] or x["status"] or "")[:120], "at": x["finished_at"]}
@@ -1211,17 +1214,33 @@ async def live_status(org_id: int) -> dict:
 
 
 async def list_needs_you(org_id: int) -> list[dict]:
-    """Outcomes waiting on a person (the needs-you inbox)."""
+    """Outcomes waiting on a person (the needs-you inbox): escalations the engine
+    couldn't resolve, outcomes awaiting approval, and sampled spot-checks."""
     cur = await _db.execute(
-        """SELECT o.id outcome_id, o.agent_id, a.name, o.needs_you_reason reason,
-                  o.attempts, o.finished_at at, o.recovery_json
+        """SELECT o.id outcome_id, o.agent_id, a.name, o.status, o.needs_you_reason reason,
+                  o.attempts, coalesce(o.finished_at, o.review_requested_at, o.started_at) at,
+                  o.recovery_json, o.receipt_json, o.manifest_json
            FROM outcomes o JOIN agents a ON a.id = o.agent_id
-           WHERE o.org_id=? AND o.status='needs_you' ORDER BY o.id DESC LIMIT 20""", (org_id,))
+           WHERE o.org_id=? AND (o.status IN ('needs_you','awaiting_approval')
+                 OR (o.status='delivered' AND o.review_requested_at IS NOT NULL
+                     AND o.reviewed_at IS NULL))
+           ORDER BY o.id DESC LIMIT 30""", (org_id,))
     out = []
     for r in await cur.fetchall():
         d = dict(r)
         log_ = _unj(d.pop("recovery_json")) or []
+        receipt = _unj(d.pop("receipt_json")) or {}
+        manifest = _unj(d.pop("manifest_json")) or {}
         d["class"] = (log_[-1] if log_ else {}).get("class")
+        d["kind"] = {"needs_you": "escalation", "awaiting_approval": "approval"}.get(d["status"], "spot_check")
+        if d["kind"] != "escalation":
+            d["reason"] = receipt.get("summary")
+            d["preview"] = (receipt.get("delivery_preview")
+                            or "\n".join(f"- {x}" for x in (manifest.get("produced") or []))
+                            or None)
+            d["checks"] = [{"name": c.get("name"), "passed": c.get("passed"), "kind": c.get("kind"),
+                            "observed": c.get("observed")} for c in receipt.get("checks") or []
+                           if c.get("kind") != "human"]
         out.append(d)
     return out
 
@@ -1695,7 +1714,9 @@ async def link_run_to_outcome(run_id: int, outcome_id: int) -> int:
 
 
 _OUTCOME_FIELDS = {"status", "finished_at", "verified_at", "manifest_json", "receipt_json",
-                   "cost_usd", "needs_you_reason", "next_attempt_at", "recovery_json"}
+                   "cost_usd", "needs_you_reason", "next_attempt_at", "recovery_json",
+                   "review_requested_at", "reviewed_at", "reviewed_by", "review_note",
+                   "review_verdict"}
 
 
 async def update_outcome(outcome_id: int, **fields) -> None:
@@ -1708,6 +1729,12 @@ async def update_outcome(outcome_id: int, **fields) -> None:
         return
     vals.append(outcome_id)
     await _db.execute(f"UPDATE outcomes SET {', '.join(sets)} WHERE id=?", vals)
+    await _db.commit()
+
+
+async def mark_check_result(result_id: int, *, passed: bool, observed: str) -> None:
+    await _db.execute("UPDATE check_results SET passed=?, observed=? WHERE id=?",
+                      (1 if passed else 0, observed, result_id))
     await _db.commit()
 
 
@@ -1799,7 +1826,8 @@ async def ledger_rows(org_id: int, since_iso: str) -> dict:
     cur = await _db.execute(
         """SELECT o.id, o.agent_id, a.name, a.baseline_minutes, o.trigger, o.status, o.attempts,
                   o.started_at, o.finished_at, o.verified_at, o.recovery_json, o.flagged_at,
-                  o.needs_you_reason
+                  o.needs_you_reason, json_extract(o.receipt_json, '$.strength') strength,
+                  o.review_requested_at, o.reviewed_at, o.review_verdict
            FROM outcomes o JOIN agents a ON a.id=o.agent_id
            WHERE o.org_id=? AND o.started_at >= ? AND o.trigger != 'dry_run'
            ORDER BY o.id""", (org_id, since_iso))

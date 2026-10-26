@@ -590,6 +590,18 @@
   .lg-table td:first-child a{ color:var(--fg); font-weight:500; }
   .lg-min{ width:64px; padding:3px 6px; text-align:right; font:inherit; background:var(--surface); color:var(--fg);
     border:1px solid var(--line); border-radius:var(--r-sm); }
+  .oc-str{ font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.08em;
+    color:var(--warn); border:1px solid currentColor; border-radius:var(--r-pill); padding:0 6px; margin-left:4px; }
+  .oc-checks li.wait .oc-mark{ color:var(--warn); }
+  .oc-crit{ grid-column:2; margin-top:4px; font-size:var(--fs-xs); }
+  .oc-crit summary{ color:var(--accent); cursor:pointer; }
+  .oc-crit ul{ list-style:none; padding:0; margin:6px 0 0; display:flex; flex-direction:column; gap:4px; }
+  .oc-crit li.pass .oc-mark{ color:var(--ok); } .oc-crit li.fail .oc-mark{ color:var(--err); }
+  .oc-crit q{ display:block; color:var(--fg-2); font-style:italic; margin:2px 0 0 16px; }
+  .oc-review{ border:1px solid var(--warn); background:var(--warn-soft); border-radius:var(--r-md);
+    padding:10px 12px; display:flex; flex-direction:column; gap:6px; margin:8px 0; }
+  .oc-review.bare{ border:0; background:none; padding:0; margin:0; }
+  .oc-review summary{ font-size:var(--fs-xs); color:var(--accent); cursor:pointer; }
   .oc-flag summary{ font-size:var(--fs-xs); color:var(--muted); cursor:pointer; }
   .ny-item{ display:flex; flex-direction:column; gap:6px; padding:10px 0; }
   .ny-item + .ny-item{ border-top:1px solid var(--line); }
@@ -2073,8 +2085,11 @@ const _OC = {
   running:   {cls:'running',   label:'running'},
   recovering:{cls:'running',   label:'recovering'},
   needs_you: {cls:'failed',    label:'needs you'},
+  awaiting_approval: {cls:'running', label:'awaiting approval'},
 };
-const _OC_ACT = {retry:'retried', needs_you:'asked you', gave_up:'gave up'};
+const _STR = {judged:'judged', accepted:'accepted'};   // verified is the default, not labelled
+const _OC_ACT = {retry:'retried', needs_you:'asked you', gave_up:'gave up', reverify:'checking again',
+  approved:'approved', rejected:'rejected', dismissed:'dismissed'};
 function _dest(d){
   if (!d) return '';
   return {notify:'in-app', slack:`Slack ${d.channel||''}`, email:`email to ${d.to||''}`,
@@ -2113,10 +2128,13 @@ function outcomeCard(t){
     <div class="oc-sum">The next run will be verified against these checks.</div></div>`;
   const st = _OC[o.status] || {cls:'none', label:o.status};
   const r = o.receipt || {};
-  const checks = (r.checks || []).map(c => `<li class="${c.passed?'pass':'fail'}">
-      <span class="oc-mark">${c.passed?'✓':'✗'}</span>
-      <span class="oc-name">${esc(c.name)}</span>
-      <span class="oc-ev">${c.observed!=null?'observed '+esc(_ocVal(c.observed)):''}${c.expected?` <span class="oc-exp">· expected ${esc(c.expected)}</span>`:''}</span></li>`).join('');
+  const checks = (r.checks || []).map(c => `<li class="${c.pending?'wait':c.passed?'pass':'fail'}">
+      <span class="oc-mark">${c.pending?'…':c.passed?'✓':'✗'}</span>
+      <span class="oc-name">${esc(c.name)}${_STR[c.strength]?` <span class="oc-str">${_STR[c.strength]}</span>`:''}</span>
+      <span class="oc-ev">${c.observed!=null?(c.kind==='judge'?'score ':'observed ')+esc(_ocVal(c.observed)):''}${c.expected?` <span class="oc-exp">· expected ${esc(c.expected)}</span>`:''}</span>
+      ${(c.criteria||[]).length ? `<details class="oc-crit"><summary>What the judge found</summary><ul>${c.criteria.map(k =>
+        `<li class="${k.met?'pass':'fail'}"><span class="oc-mark">${k.met?'✓':'✗'}</span> ${esc(k.criterion)}
+          ${k.met && k.evidence ? `<q>${esc(k.evidence)}</q>` : k.why ? `<span class="oc-exp">— ${esc(k.why)}</span>` : ''}</li>`).join('')}</ul></details>` : ''}</li>`).join('');
   const meta = [r.verified_at ? 'verified '+_ocTime(r.verified_at) : '',
                 r.run_id ? `run #${r.run_id}` : '',
                 r.runtime_s ? Math.round(r.runtime_s/60)+'m' : '',
@@ -2125,7 +2143,7 @@ function outcomeCard(t){
     const s = _OC[x.status] || {cls:'none', label:x.status};
     return `<span class="oc-dot b-${s.cls}" title="#${x.id} · ${esc(s.label)} · ${esc(_ocTime(x.started_at))}"></span>`;
   }).join('');
-  const busy = o.status === 'running' || o.status === 'verifying';
+  const busy = o.status === 'running' || o.status === 'verifying' || o.status === 'awaiting_approval';
   return `<div class="outcome-card oc-${st.cls}">
     <div class="oc-head">
       <span class="badge b-${st.cls}">${esc(r.headline || st.label)}</span>${o.trigger==='dry_run'?'<span class="badge">dry run</span>':''}
@@ -2138,6 +2156,9 @@ function outcomeCard(t){
         <button class="sm" onclick="resolveOutcome(${o.id},'retry')">Retry</button>
         <button class="ghost sm" onclick="resolveOutcome(${o.id},'dismiss')">Dismiss</button></div></div>` : ''}
     ${o.status === 'recovering' && o.next_attempt_at ? `<div class="oc-note">Next attempt ${esc(_ocTime(o.next_attempt_at))}</div>` : ''}
+    ${o.status === 'awaiting_approval' ? _reviewBox(o.id, r.delivery_preview, 'approval') : ''}
+    ${o.status === 'delivered' && o.review_requested_at && !o.reviewed_at ? _reviewBox(o.id, null, 'spot_check') : ''}
+    ${o.reviewed_at && o.review_verdict ? `<div class="oc-note">Reviewed by ${esc(o.reviewed_by||'an owner')} · ${esc({ok:'looks right',wrong:'marked wrong',rejected:'rejected'}[o.review_verdict]||o.review_verdict)}${o.review_note?' — '+esc(o.review_note):''}</div>` : ''}
     ${checks ? `<ul class="oc-checks">${checks}</ul>` : ''}
     ${(r.attempt_log||[]).length ? `<ol class="oc-steps">${r.attempt_log.map(e => `<li>
         <span class="oc-att">Attempt ${e.attempt}</span> ${esc(e.label||e.class)}
@@ -2155,6 +2176,33 @@ function outcomeCard(t){
     ${obj}
   </div>`;
 }
+// a person's verdict: approval gate (before delivery) or a sampled spot-check (after)
+function _reviewBox(oid, preview, kind, bare){
+  const appr = kind === 'approval';
+  return `<div class="oc-review${bare?' bare':''}">
+    ${bare ? '' : `<b>${appr ? 'Waiting for your approval' : 'Spot-check requested'}</b>
+    <span class="dod-sum">${appr ? 'The automatic checks passed. Nothing is sent until you approve.'
+      : 'This outcome was delivered and picked at random for a person to check.'}</span>`}
+    ${preview ? `<details open><summary>What will be delivered</summary><div class="dod-preview">${esc(preview)}</div></details>` : ''}
+    <div class="ny-actions"><input type="text" class="modal-input" id="rvNote${oid}" maxlength="2000"
+        placeholder="${appr ? 'Note, or what should change…' : 'What was wrong (optional)'}">
+      <button class="sm" onclick="reviewOutcome(${oid},'approve')">${appr ? 'Approve &amp; send' : 'Looks right'}</button>
+      ${appr ? `<button class="ghost sm" onclick="reviewOutcome(${oid},'changes')">Request changes</button>` : ''}
+      <button class="ghost sm" onclick="reviewOutcome(${oid},'reject')">${appr ? 'Reject' : 'Wrong'}</button></div></div>`;
+}
+window.reviewOutcome = async (oid, decision) => {
+  const inp = document.querySelectorAll('#rvNote'+oid);
+  const note = [...inp].map(i => i.value.trim()).find(Boolean) || '';
+  if (decision === 'changes' && !note){ toast('Say what should change', 'err'); return; }
+  if (decision === 'reject' && !await confirmDialog('Reject this outcome? Nothing is delivered and it counts as not done.', {danger:true, confirmText:'Reject'})) return;
+  try {
+    const o = await api('/api/outcomes/'+oid+'/review', {method:'POST', body:JSON.stringify({decision, note})});
+    toast({approve: o.status==='delivered' && o.review_verdict==='ok' && o.receipt && o.receipt.status==='delivered' ? 'Approved — delivering' : 'Thanks',
+           changes:'Sent back with your note — retrying', reject:'Rejected'}[decision], 'ok');
+  } catch(e){ toast(e.detail||e.message||'error','err'); }
+  await loadLive();
+  if (CURRENT_TASK_ID) openTask(CURRENT_TASK_ID);
+};
 window.redeliverOutcome = async (oid) => {
   try {
     const o = await api('/api/outcomes/'+oid+'/deliver', {method:'POST'});
@@ -2178,9 +2226,16 @@ const _DOD_TPL = {
         config:{connection_id:null, query:"SELECT count(*) FROM my_table WHERE created_at::date = '{date}'", expect:'>= 1'}},
   artifact: {kind:'artifact', name:'Report file updated', required:true,
         config:{path:'output/report.md', non_empty:true, modified_since_start:true}},
+  judge: {kind:'judge', name:'Message covers what matters', required:true,
+        config:{rubric:['Names every item that changed, with before and after values',
+                        'Says what the reader should do next'], source:'outbox', threshold:0.8}},
+  human: {kind:'human', name:'Owner approves before sending', required:true, config:{mode:'approve'}},
 };
+const _DOD_KIND = {sql:'SQL', artifact:'file', judge:'judge', human:'person'};
 function _dodCheckSummary(c){
   const k = c.config || {};
+  if (c.kind === 'judge') return `${(k.rubric||[]).length} criteria · reads ${({outbox:'the delivery message', result:"the agent's final answer", file:k.path||'a file'})[k.source||'outbox']} · pass at ${k.threshold ?? 0.8} · shown as JUDGED`;
+  if (c.kind === 'human') return k.mode === 'sample' ? `spot-check ${Math.round((k.rate??0.2)*100)}% of delivered outcomes · doesn't block delivery` : 'nothing is delivered until an owner approves · shown as ACCEPTED';
   if (c.kind === 'sql') return `${k.expect ? 'expects '+k.expect : 'no expectation'} · data source #${k.connection_id ?? '?'}`;
   const bits = ['non_empty','modified_since_start','ts_after_start'].filter(x => k[x]).map(x => x.replace(/_/g,' '));
   if (k.contains) bits.push(`contains "${k.contains}"`);
@@ -2216,7 +2271,7 @@ function _dodRender(view){
   if (!DOD.draft || view === 'describe'){ b.innerHTML = _dodDescribeHtml(); return; }
   const d = DOD.draft;
   const checks = d.checks.map((c,i) => `<div class="dod-check" data-i="${i}">
-      <div class="dod-crow"><span class="dod-kind">${c.kind==='sql'?'SQL':'file'}</span>
+      <div class="dod-crow"><span class="dod-kind">${_DOD_KIND[c.kind]||c.kind}</span>
         <input type="text" class="modal-input dod-cname" value="${esc(c.name)}" aria-label="Check name">
         <label class="dod-sum" title="A failed required check means the outcome isn't done"><input type="checkbox" class="dod-creq" ${c.required?'checked':''}> required</label>
         <button class="ghost dod-x" onclick="dodRemoveCheck(${i})" aria-label="Remove check">✕</button></div>
@@ -2238,7 +2293,9 @@ function _dodRender(view){
     <div class="dod-sec"><span class="fld-label">Checks — run read-only after the agent finishes</span>
       <div id="dodChecks">${checks}</div>
       <div class="oc-cta" style="margin-top:8px"><button class="ghost sm" onclick="dodAddCheck('sql')">+ SQL check</button>
-        <button class="ghost sm" onclick="dodAddCheck('artifact')">+ File check</button></div></div>
+        <button class="ghost sm" onclick="dodAddCheck('artifact')">+ File check</button>
+        <button class="ghost sm" onclick="dodAddCheck('judge')" title="A separate model scores the output against criteria — for what a query or file can't prove">+ Judge</button>
+        <button class="ghost sm" onclick="dodAddCheck('human')" title="An owner approves before delivery, or spot-checks a sample">+ Person</button></div></div>
     <div class="dod-sec"><span class="fld-label">Deliver to — sent once, only after the checks pass</span>
       <div class="oc-dl">${dests || '<span class="dod-sum">nowhere yet</span>'}</div>
       <div class="oc-cta" style="margin-top:8px">
@@ -2373,7 +2430,12 @@ function renderNeedsYou(){
   const items = LIVE.needs_you || [];
   if (!items.length){ p.style.display = 'none'; return; }
   p.style.display = '';
-  $('#needsYouList').innerHTML = items.map(n => `<div class="ny-item">
+  $('#needsYouList').innerHTML = items.map(n => n.kind && n.kind !== 'escalation' ? `<div class="ny-item">
+      <div><a href="#" class="ny-name" onclick="gotoRoutine(${n.agent_id});return false">${esc(n.name)}</a>
+        <span class="dod-sum"> · ${n.kind==='approval' ? 'awaiting your approval' : 'spot-check'} · ${esc(_ocTime(n.at))}</span></div>
+      <div class="ny-reason">${esc(n.reason || '')}${(n.checks||[]).length ? ' '+n.checks.map(c => (c.passed?'✓ ':'✗ ')+esc(c.name)).join(' · ') : ''}</div>
+      ${_reviewBox(n.outcome_id, n.preview, n.kind, true)}
+    </div>` : `<div class="ny-item">
       <div><a href="#" class="ny-name" onclick="gotoRoutine(${n.agent_id});return false">${esc(n.name)}</a>
         <span class="dod-sum"> · ${esc(_NY_CLASS[n.class] || n.class || 'stopped')} · ${n.attempts||0} attempt${n.attempts===1?'':'s'} · ${esc(_ocTime(n.at))}</span></div>
       <div class="ny-reason">${esc(n.reason || 'The engine stopped and is waiting for you.')}</div>
@@ -2427,14 +2489,16 @@ async function loadLedger(){
   const card = (l,v,s) => `<div class="obs-card"><div class="oc-l">${l}</div><div class="oc-v">${v}</div>${s?'<div class="oc-s">'+s+'</div>':''}</div>`;
   const good = t.delivered - t.flagged;
   $('#lgCards').innerHTML =
-    card('Verified outcomes', good, `of ${t.outcomes} · ${t.by_status.failed} not done${t.by_status.needs_you?' · '+t.by_status.needs_you+' need you':''}`) +
+    card('Delivered outcomes', good, `${t.by_strength.verified} verified · ${t.by_strength.judged} judged · ${t.by_strength.accepted} accepted`
+         + `<br>of ${t.outcomes} · ${t.by_status.failed} not done${t.by_status.needs_you?' · '+t.by_status.needs_you+' need you':''}${t.by_status.awaiting_approval?' · '+t.by_status.awaiting_approval+' awaiting approval':''}`) +
     card('Without a human', _pct(t.unattended_rate), `${t.first_try} first try · ${t.recovered} recovered on their own`) +
     card('Cost per verified outcome', _costLine(t), t.tokens_per_verified ? _tok(t.tokens_per_verified)+' tokens each' : `${_usd(t.spend_usd)} total`) +
     card('Time saved', t.minutes_saved ? _hrs(t.minutes_saved) : '—',
          t.minutes_saved ? `${_usd(t.value_usd)} at $${d.hourly_rate}/h` : (t.baseline_missing ? 'set minutes per outcome below' : '')) +
     card('Escalations', es.count, es.open ? `${es.open} open${es.oldest_open_h!=null?' · oldest '+_ocAge(es.oldest_open_h):''}`
          : es.median_wait_h!=null ? 'median wait '+_ocAge(es.median_wait_h) : 'none open') +
-    card('Marked wrong', t.delivered ? _pct(t.false_delivered_rate) : '—', `${t.flagged} of ${t.delivered} delivered`);
+    card('Marked wrong', t.delivered ? _pct(t.false_delivered_rate) : '—', `${t.flagged} of ${t.delivered} delivered`
+         + (t.spot_checks.requested ? ` · spot-checked ${t.spot_checks.reviewed}/${t.spot_checks.requested}` : ''));
   // daily strip
   const max = Math.max(1, ...d.daily.map(x => x.delivered+x.failed+x.needs_you+x.other));
   $('#lgDaily').innerHTML = `<div class="lg-bars" role="img" aria-label="Outcomes per day">${d.daily.map(x => {

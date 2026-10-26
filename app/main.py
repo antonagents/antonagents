@@ -48,7 +48,7 @@ from . import (auth, config, connectors, db, db_access, deliver, ledger, outcome
                scheduler, templates, verify)
 from .auth import current_user
 from .connectors import db_driver
-from .models import (BaselineIn, FlagIn, AgentAlertsIn, AgentConnectorsIn, AgentCreate, AgentModelIn, AgentNameIn,
+from .models import (BaselineIn, FlagIn, ReviewIn, AgentAlertsIn, AgentConnectorsIn, AgentCreate, AgentModelIn, AgentNameIn,
                      AgentDbConnectionsIn, AgentScheduleIn, AgentSkillsIn, ApiKeyIn,
                      DbConnectionIn, DbConnectionTestIn, DbConnectionUpdateIn,
                      InvitationIn, JobSpecIn, LoginIn, MemberRoleIn, ResolveIn,
@@ -1197,12 +1197,21 @@ async def test_job_checks(agent_id: int, body: TestChecksIn, user: dict = Depend
     agent = await _owned_agent_or_404(agent_id, user)
     checks = await _validate_checks(body.checks, _org_id(user))
     last = await db.last_run(agent_id)
+    full = await db.get_run(last["id"]) if last else None
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     start = (last or {}).get("started_at") or (last or {}).get("created_at") or now
+    spec = await db.get_latest_spec(agent_id)
     ctx = {"date": start[:10], "outcome_start": start,
            "outcome_end": (last or {}).get("finished_at"),
-           "org_id": _org_id(user), "agent_id": agent_id}
-    results = await verify.run_checks(checks, ctx)
+           "org_id": _org_id(user), "agent_id": agent_id,
+           # judges read the latest run's answer / staged message
+           "outcome_id": (full or {}).get("outcome_id"),
+           "objective": (spec or {}).get("objective"),
+           "result": outcomes._MANIFEST.sub("", (full or {}).get("result") or "").strip()}
+    results = await verify.run_checks([c for c in checks if c["kind"] != "human"], ctx)
+    results += [{"name": c["name"], "kind": "human", "strength": "accepted", "required": c["required"],
+                 "passed": True, "observed": "decided by a person — not tested",
+                 "expected": None} for c in checks if c["kind"] == "human"]
     return {"against_run": last and last.get("id"), "date": ctx["date"],
             "passed": all(r["passed"] for r in results if r["required"]),
             "results": results}
@@ -1238,6 +1247,18 @@ async def outcome_ledger(days: int = 30, user: dict = Depends(current_user)):
     """The outcome ledger: verified outcomes, unattended rate, cost per verified
     outcome, escalations and recurring blockers over the last `days` days."""
     return await ledger.build(_org_id(user), max(1, min(90, days)))
+
+
+@app.post("/api/outcomes/{outcome_id}/review")
+async def review_outcome(outcome_id: int, body: ReviewIn, user: dict = Depends(current_user)):
+    """Approve / request changes / reject an outcome awaiting approval, or give the
+    verdict on a sampled spot-check."""
+    await _owned_outcome_or_404(outcome_id, user)
+    who = user.get("name") or user.get("email") or f"user {user['id']}"
+    try:
+        return await outcomes.review(outcome_id, body.decision, body.note, who)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
 
 
 @app.post("/api/outcomes/{outcome_id}/flag")

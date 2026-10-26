@@ -98,7 +98,7 @@ Return ONLY one JSON object, no prose, with this shape:
 
 Checks are run independently AFTER the agent finishes, against the real systems,
 read-only. They must PASS when the job really happened and FAIL when it did not.
-Two kinds only:
+Deterministic kinds (strength "verified") — always prefer these:
 1. {"kind":"sql","name":"plain-language name","config":{"connection_id":<id from data_sources>,
     "query":"SELECT ... single read-only statement","expect":">= N" | "between A and B" | "nonempty" | "== N"},
     "required":true}
@@ -111,6 +111,17 @@ Two kinds only:
     "last_line_matches":"regex", "line_regex":"regex with (?P<ts>...ISO timestamp...)",
     "ts_after_start":true}, "required":true}
    - Only paths that exist in workspace_files.
+Qualitative kinds — only for what a query or file check cannot prove:
+3. {"kind":"judge","name":"...","config":{"rubric":["concrete, checkable criterion", ...1-6],
+    "source":"outbox"|"result"|"file", "path":"only for file", "threshold":0.8},"required":true}
+   - A separate model scores the output; each criterion must be answerable from the text
+     alone ("names at least 3 competitors with prices", not "is insightful").
+   - source "outbox" = the message staged for delivery (only if deliver_to has a message
+     destination); "result" = the agent's final answer; "file" = a workspace file.
+   - Shown to the user as JUDGED, never as verified.
+4. {"kind":"human","name":"Owner approves before sending","config":{"mode":"approve"}} —
+   ONLY if the user asked to review/approve before delivery. {"mode":"sample","rate":0.2}
+   — only if they asked for spot-checks.
 
 Destinations: always include {"kind":"notify"} (in-app). Add {"kind":"slack","channel":"#x"} or
 {"kind":"email","to":"a@b.co"} ONLY if the user asked for it AND that channel is in

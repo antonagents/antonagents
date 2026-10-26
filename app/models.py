@@ -148,7 +148,7 @@ class AgentDbConnectionsIn(BaseModel):
 # ---------------- outcome jobs (docs/features/outcome-jobs.md) ----------------
 
 class JobCheckIn(BaseModel):
-    kind: Literal["sql", "artifact"]
+    kind: Literal["sql", "artifact", "judge", "human"]
     name: str = Field(..., min_length=1, max_length=200)
     config: dict = Field(default_factory=dict)
     required: bool = True
@@ -183,3 +183,9 @@ class FlagIn(BaseModel):
 
 class BaselineIn(BaseModel):
     minutes: Optional[int] = Field(None, ge=0, le=100000)
+
+
+class ReviewIn(BaseModel):
+    """A person's verdict on an outcome awaiting approval or picked for a spot-check."""
+    decision: Literal["approve", "changes", "reject"]
+    note: str = Field("", max_length=2000)
