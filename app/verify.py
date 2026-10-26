@@ -263,9 +263,11 @@ def grade(criteria: list[str], answer: Optional[dict], content: str) -> tuple[fl
         met = bool(c.get("met"))
         ev = str(c.get("evidence") or "")[:300]
         why = str(c.get("why") or "")[:300]
-        if met and (len(_norm(ev).split()) < 3 or f" {_norm(ev)} " not in f" {hay} "):
-            met, why = False, "the judge's quoted evidence isn't in the output"
-        out.append({"criterion": crit, "met": met, "evidence": ev if met else "", "why": why})
+        unverified = met and (len(_norm(ev).split()) < 3 or f" {_norm(ev)} " not in f" {hay} ")
+        if unverified:
+            met, why = False, "the reviewer said it's there but couldn't point to it in the output"
+        out.append({"criterion": crit, "met": met, "evidence": ev if met else "", "why": why,
+                    **({"unverified_quote": ev} if unverified else {})})
     score = sum(1 for c in out if c["met"]) / len(out) if out else 0.0
     return score, out
 
@@ -296,21 +298,37 @@ async def _check_judge(cfg: dict, ctx: dict) -> dict:
     user = (f"Objective of the job: {ctx.get('objective') or '(not stated)'}\n\n"
             "Criteria:\n" + "\n".join(f"- {c}" for c in criteria)
             + f"\n\n<output source=\"{what}\">\n{content}\n</output>")
-    answer, last_err = None, ""
-    for _ in range(2):   # one retry: judge outages shouldn't re-run the agent
-        try:
-            text = await llm.complete(_JUDGE_SYSTEM, user, max_tokens=3000, timeout=150,
-                                      provider=config.JUDGE_PROVIDER, model=config.JUDGE_MODEL)
-            answer = llm.extract_json(text)
-            if answer:
-                break
-            last_err = "the judge didn't return JSON"
-        except llm.LLMError as e:
-            last_err = str(e)[:200]
+    async def ask(prompt: str) -> tuple[Optional[dict], str]:
+        err = ""
+        for _ in range(2):   # one retry: judge outages shouldn't re-run the agent
+            try:
+                text = await llm.complete(_JUDGE_SYSTEM, prompt, max_tokens=3000, timeout=150,
+                                          provider=config.JUDGE_PROVIDER, model=config.JUDGE_MODEL)
+                a = llm.extract_json(text)
+                if a:
+                    return a, ""
+                err = "the judge didn't return JSON"
+            except llm.LLMError as e:
+                err = str(e)[:200]
+        return None, err
+
+    answer, last_err = await ask(user)
     if not answer:
         return {"passed": False, "observed": "judge unavailable", "expected": expected,
                 "detail": last_err, "unavailable": True}
     score, graded = grade(criteria, answer, content)
+    sloppy = [c for c in graded if c.get("unverified_quote")]
+    if sloppy and score < threshold:
+        # the judge claimed criteria were met but misquoted: ask once more for exact
+        # quotes (one judge call) rather than re-running the whole job
+        nudge = ("\n\nYour previous answer quoted text that is NOT in the output verbatim for: "
+                 + "; ".join(c["criterion"] for c in sloppy)
+                 + ". Copy evidence EXACTLY, character for character, from a single place in the output.")
+        again, _ = await ask(user + nudge)
+        if again:
+            s2, g2 = grade(criteria, again, content)
+            if s2 > score:
+                score, graded = s2, g2
     met = sum(1 for c in graded if c["met"])
     return {"passed": score >= threshold, "observed": f"{score:.2f} ({met}/{len(graded)})",
             "expected": expected, "detail": json.dumps(graded), "criteria": graded}

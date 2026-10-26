@@ -270,6 +270,8 @@ async def verify_outcome(outcome_id: int, attempt: Optional[int] = None,
         return await db.get_outcome(outcome_id)
 
     receipt = _receipt(o, spec, results, run, False, strength)
+    if manifest and manifest.get("blocked"):   # it said it couldn't, not that it did
+        receipt["note"] = f"The agent reported it couldn't finish: {str(manifest['blocked'])[:200]}"
     if preview:
         receipt["delivery_preview"] = preview
     if not recover:

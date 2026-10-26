@@ -202,10 +202,14 @@ and data sources listed in the context. Return ONLY one JSON object:
  "checks": [ ...1 to 6 checks, as defined below... ],
  "deliver_to": [ ...destinations... ],
  "budget": {"max_attempts": 3},
- "notes": "assumptions, and anything the user must do first (e.g. connect Slack)"
+ "blockers": ["only things that will make the job FAIL as planned, e.g. 'no orders table in
+   any connected data source' or 'needs Slack, which isn't connected' — else []"],
+ "notes": "assumptions, and anything the user should know"
 }
 
 SCHEDULE: cron runs in the server's timezone given in context. "once" = run one time now.
+Instructions describe dates in words ("yesterday, in the server's timezone"); the {date}
+placeholder exists ONLY inside SQL check queries.
 
 CHECKS run independently after the agent finishes, read-only; they must PASS only when the
 job really happened. Prefer deterministic kinds:
@@ -270,7 +274,7 @@ async def plan_job(org_id: int, owner_id: int, description: str,
     raw = llm.extract_json(await llm.complete(_JOB_SYSTEM, user, max_tokens=5000, timeout=180))
     if not raw:
         raise llm.LLMError("the planner didn't return a usable plan — try rephrasing")
-    warnings = []
+    warnings = [f"Blocker: {str(b)[:600]}" for b in (raw.get("blockers") or []) if str(b).strip()]
     sched = raw.get("schedule") or {}
     kind, expr = sched.get("kind"), sched.get("expr")
     if kind == "cron":

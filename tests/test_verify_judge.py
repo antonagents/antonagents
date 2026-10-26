@@ -18,7 +18,8 @@ def test_quote_retyped_with_other_punctuation_counts():
 def test_invented_quote_is_rejected():
     score, out = grade(["a"], _answer("Do not build list of pains nobody serves"), CONTENT)
     assert score == 0.0 and not out[0]["met"]
-    assert "isn't in the output" in out[0]["why"]
+    assert "couldn't point to it" in out[0]["why"]
+    assert out[0]["unverified_quote"] == "Do not build list of pains nobody serves"
 
 
 def test_word_fragment_and_too_short_quotes_are_rejected():

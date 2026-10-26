@@ -569,6 +569,24 @@
   .dod-preview{ white-space:pre-wrap; font-size:var(--fs-xs); background:var(--surface-2); border:1px solid var(--line);
     border-radius:var(--r-sm); padding:8px 10px; margin-top:6px; }
   .ny-panel{ border-left:3px solid var(--err); }
+  /* dropdowns keep a visible arrow (the shared input style strips the native one) */
+  select.modal-input{ appearance:none; -webkit-appearance:none; padding-right:34px; cursor:pointer;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8f98' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:right 12px center; }
+  .oc-cta .modal-input, .ny-actions .modal-input{ margin-bottom:0; }
+  .oc-cta select.modal-input{ max-width:100%; }
+  @media (max-width:640px){
+    .dod-crow{ flex-wrap:wrap; }
+    .dod-crow input[type=text]{ flex:1 1 100%; order:5; }
+  }
+  .dod-preview{ max-height:260px; overflow:auto; }
+  .lg-blk .fname{ font-family:var(--font-sans); font-weight:500; }
+  .dod-warn.top{ background:var(--warn-soft); border:1px solid var(--warn); border-radius:var(--r-sm);
+    padding:8px 10px; color:var(--fg); margin-bottom:8px; }
+  @media (max-width:720px){
+    .routines-wrap{ grid-template-columns:1fr; height:auto; }
+    .routines-left{ border-right:0; border-bottom:1px solid var(--line); }
+  }
   /* outcome ledger (step 5) */
   .navcount.err{ background:var(--err); color:#fff; }
   .lg-est{ font-size:10px; font-weight:500; color:var(--muted); margin-left:4px; letter-spacing:.04em;
@@ -983,7 +1001,7 @@
 <!-- ===== SCHEDULE EDITOR ===== -->
 <div id="dodModal" class="modal" onclick="if(event.target===this)closeDod()">
   <div class="modal-card" style="width:800px">
-    <div class="modal-head"><h2>Definition of done</h2><span class="count" id="dodFor"></span>
+    <div class="modal-head"><h2 id="dodTitle">Definition of done</h2><span class="count" id="dodFor"></span>
       <button class="ghost" style="margin-left:auto" onclick="closeDod()">Close</button></div>
     <div class="modal-body" id="dodBody"></div>
   </div>
@@ -1442,10 +1460,25 @@ const $ = s => document.querySelector(s);
 
 // Every backend call goes through here. Cookies ride automatically (incl. SSE);
 // a 401 anywhere bounces us back to the login screen.
-const api = (p, o) => fetch(p, o).then(r => {
-  if (r.status === 401) { showLogin(); return Promise.reject({detail:'not authenticated'}); }
-  return r.ok ? r.json() : r.json().then(e=>Promise.reject(e));
-});
+// JSON in, JSON out. A string body is JSON unless the caller says otherwise (without
+// the header the browser sends text/plain and the API rejects it with 422).
+const api = (p, o) => {
+  o = o || {};
+  if (typeof o.body === 'string'){
+    const h = new Headers(o.headers || {});
+    if (!h.has('content-type')) h.set('content-type', 'application/json');
+    o = {...o, headers:h};
+  }
+  return fetch(p, o).then(r => {
+    if (r.status === 401) { showLogin(); return Promise.reject({detail:'not authenticated'}); }
+    if (r.ok) return r.json();
+    return r.json().catch(() => ({detail:`HTTP ${r.status}`})).then(e => {
+      // FastAPI validation errors are a list — make them a readable sentence
+      if (Array.isArray(e.detail)) e.detail = e.detail.map(x => `${(x.loc||[]).slice(1).join('.')}: ${x.msg}`).join('; ');
+      return Promise.reject(e);
+    });
+  });
+};
 
 // ---------------- in-app toasts + confirm (replace native alert/confirm/prompt) ----------------
 function toast(msg, type){
@@ -2191,7 +2224,7 @@ function _reviewBox(oid, preview, kind, bare){
     ${bare ? '' : `<b>${appr ? 'Waiting for your approval' : 'Spot-check requested'}</b>
     <span class="dod-sum">${appr ? 'The automatic checks passed. Nothing is sent until you approve.'
       : 'This outcome was delivered and picked at random for a person to check.'}</span>`}
-    ${preview ? `<details open><summary>What will be delivered</summary><div class="dod-preview">${esc(preview)}</div></details>` : ''}
+    ${preview ? `<details ${bare ? '' : 'open'}><summary>What will be delivered</summary><div class="dod-preview">${esc(preview)}</div></details>` : ''}
     <div class="ny-actions"><input type="text" class="modal-input" id="rvNote${oid}" maxlength="2000"
         placeholder="${appr ? 'Note, or what should change…' : 'What was wrong (optional)'}">
       <button class="sm" onclick="reviewOutcome(${oid},'approve')">${appr ? 'Approve &amp; send' : 'Looks right'}</button>
@@ -2240,11 +2273,14 @@ const _DOD_TPL = {
   human: {kind:'human', name:'Owner approves before sending', required:true, config:{mode:'approve'}},
 };
 const _DOD_KIND = {sql:'SQL', artifact:'file', judge:'judge', human:'person'};
+let DS_NAMES = {};
+function esc_ds(id){ return DS_NAMES[id] ? `data source ${DS_NAMES[id]}` : `data source #${id ?? '?'}`; }
+async function _dsNames(){ try { (await api('/api/db-connections')).forEach(x => DS_NAMES[x.id] = x.name); } catch(e){} }
 function _dodCheckSummary(c){
   const k = c.config || {};
   if (c.kind === 'judge') return `${(k.rubric||[]).length} criteria · reads ${({outbox:'the delivery message', result:"the agent's final answer", file:k.path||'a file'})[k.source||'outbox']} · pass at ${k.threshold ?? 0.8} · shown as JUDGED`;
   if (c.kind === 'human') return k.mode === 'sample' ? `spot-check ${Math.round((k.rate??0.2)*100)}% of delivered outcomes · doesn't block delivery` : 'nothing is delivered until an owner approves · shown as ACCEPTED';
-  if (c.kind === 'sql') return `${k.expect ? 'expects '+k.expect : 'no expectation'} · data source #${k.connection_id ?? '?'}`;
+  if (c.kind === 'sql') return `${k.expect ? 'expects '+k.expect : 'no expectation'} · ${esc_ds(k.connection_id)}`;
   const bits = ['non_empty','modified_since_start','ts_after_start'].filter(x => k[x]).map(x => x.replace(/_/g,' '));
   if (k.contains) bits.push(`contains "${k.contains}"`);
   if (k.last_line_matches) bits.push('last line matches');
@@ -2259,7 +2295,8 @@ window.openDod = async (agentId) => {
     checks:(t.spec.checks||[]).map(c => ({kind:c.kind, name:c.name, config:c.config||{}, required:c.required!==false})),
     deliver_to:t.spec.deliver_to||[{kind:'notify'}], budget:t.spec.budget||{max_attempts:3},
     escalate_to:t.spec.escalate_to ?? null, status:t.spec.status, version:t.spec.version};
-  await _escChannels();
+  await Promise.all([_escChannels(), _dsNames()]);
+  $('#dodTitle').textContent = 'Definition of done';
   $('#dodFor').textContent = t.name;
   _dodRender();
   $('#dodModal').style.display = 'flex';
@@ -2307,13 +2344,15 @@ function _dodRender(view){
        ${ESC_CH.owner_email ? '' : '<span class="dod-sum">Platform email isn\'t set up, so add Slack, an email via your mailbox, or a webhook to hear about it outside the app.</span>'}`
     : esc_.map((x,i) => `<span class="oc-dchip">${esc(_dest(x))}<a href="#" onclick="dodRemoveEsc(${i});return false" aria-label="Remove">✕</a></span>`).join('')
       || '<span class="oc-dchip">In-app only</span>';
-  const job = DOD.job && !DOD.agentId ? _jobFieldsHtml() : '';
+  const jobMode = DOD.job && !DOD.agentId;
+  const top = jobMode ? `${(DOD.warnings||[]).map(w => `<div class="dod-warn top">⚠ ${esc(w)}</div>`).join('')}
+    ${DOD.notes ? `<div class="dod-note" style="margin-bottom:var(--sp-3)"><b>Planner notes:</b> ${esc(DOD.notes)}</div>` : ''}` : '';
   b.innerHTML = `
-    ${job}
+    ${top}${jobMode ? _jobFieldsHtml() : ''}
     ${d.status ? `<p class="dod-lead">Version ${d.version} · ${d.status==='published'?'live — every run is verified against it':'draft — not live yet'}.
       <a href="#" onclick="dodDescribe();return false">Re-draft from a description</a></p>` : ''}
-    ${DOD.notes ? `<div class="dod-note"><b>Planner notes:</b> ${esc(DOD.notes)}</div>` : ''}
-    ${(DOD.warnings||[]).map(w => `<div class="dod-warn">⚠ ${esc(w)}</div>`).join('')}
+    ${!jobMode && DOD.notes ? `<div class="dod-note"><b>Planner notes:</b> ${esc(DOD.notes)}</div>` : ''}
+    ${!jobMode ? (DOD.warnings||[]).map(w => `<div class="dod-warn">⚠ ${esc(w)}</div>`).join('') : ''}
     <div class="dod-sec"><label class="fld-label" for="dodObj">Objective</label>
       <textarea id="dodObj" class="modal-input" rows="2">${esc(d.objective)}</textarea></div>
     <div class="dod-sec"><span class="fld-label">Checks — run read-only after the agent finishes</span>
@@ -2428,8 +2467,9 @@ function _jobFieldsHtml(){
 window.openDelegate = async (seed, fromChatId) => {
   clearTimeout(DOD && DOD.pollT);
   DOD = {agentId:null, job:null, draft:null, notes:'', warnings:[], seed:seed||'', fromChat:fromChatId||null};
-  await _escChannels();
-  $('#dodFor').textContent = fromChatId ? 'Save this chat as a job' : 'Delegate a job';
+  await Promise.all([_escChannels(), _dsNames()]);
+  $('#dodTitle').textContent = fromChatId ? 'Save as job' : 'Delegate a job';
+  $('#dodFor').textContent = '';
   _dodRender('describe');
   $('#dodModal').style.display = 'flex';
   if (seed && seed.trim().length >= 5) jobPlan();
@@ -2645,8 +2685,9 @@ async function loadLedger(){
   const card = (l,v,s) => `<div class="obs-card"><div class="oc-l">${l}</div><div class="oc-v">${v}</div>${s?'<div class="oc-s">'+s+'</div>':''}</div>`;
   const good = t.delivered - t.flagged;
   $('#lgCards').innerHTML =
-    card('Delivered outcomes', good, `${t.by_strength.verified} verified · ${t.by_strength.judged} judged · ${t.by_strength.accepted} accepted`
-         + `<br>of ${t.outcomes} · ${t.by_status.failed} not done${t.by_status.needs_you?' · '+t.by_status.needs_you+' need you':''}${t.by_status.awaiting_approval?' · '+t.by_status.awaiting_approval+' awaiting approval':''}`) +
+    card('Delivered outcomes', good, ['verified','judged','accepted'].filter(k => t.by_strength[k]).map(k => `${t.by_strength[k]} ${k}`).join(' · ')
+         + `<br>of ${t.outcomes}` + [['failed','not done'],['needs_you','need you'],['awaiting_approval','awaiting approval']]
+           .filter(([k]) => t.by_status[k]).map(([k,l]) => ` · ${t.by_status[k]} ${l}`).join('')) +
     card('Without a human', _pct(t.unattended_rate), `${t.first_try} first try · ${t.recovered} recovered on their own`) +
     card('Cost per verified outcome', _costLine(t), t.tokens_per_verified ? _tok(t.tokens_per_verified)+' tokens each' : `${_usd(t.spend_usd)} total`) +
     card('Time saved', t.minutes_saved ? _hrs(t.minutes_saved) : '—',
@@ -2666,7 +2707,7 @@ async function loadLedger(){
       <i class="d"></i> verified <i class="f"></i> not done <i class="n"></i> needs you</span><span>today</span></div>`;
   $('#lgBlockers').innerHTML = d.blockers.length
     ? '<h3 class="obs-h3">What keeps getting in the way</h3>' + d.blockers.map(b =>
-        `<div class="filerow"><span class="fname" style="flex:none;min-width:170px">${esc(b.label)}</span>
+        `<div class="filerow lg-blk"><span class="fname" style="flex:none;min-width:170px">${esc(b.label)}</span>
          <span class="fmeta" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis" title="${esc(b.example||'')}">${esc(b.routines.join(', '))}${b.example?' — '+esc(b.example):''}</span>
          <span class="fmeta">${b.count}×</span></div>`).join('')
     : (t.outcomes ? '<h3 class="obs-h3">What keeps getting in the way</h3><div class="hint">Nothing — every attempt in this window went through.</div>' : '');
@@ -2753,6 +2794,9 @@ async function openTask(id){
     </details>
   </div>`;
   await renderConversation(runs, false);            // render the run history into #rlog
+  // an outcome waiting on a person: show that card, not the bottom of the run log
+  const ask = document.querySelector('#runmeta .oc-review, #runmeta .oc-needs');
+  if (ask) setTimeout(() => ask.scrollIntoView({block:'center'}), 60);
   // ...then offer a composer so you can interact with the agent directly
   $('#rreply').style.display = 'block';
   setComposerBusy(false);
@@ -3697,7 +3741,10 @@ async function boot(){
   $('#login').style.display='none';
   $('#shell').style.display='';
   $('#navToggle').style.display='';
-  try { if (localStorage.getItem('sa-nav')==='closed') $('#shell').classList.add('nav-collapsed'); } catch(e){}
+  try {
+    const pref = localStorage.getItem('sa-nav');
+    if (pref === 'closed' || (!pref && window.innerWidth < 720)) $('#shell').classList.add('nav-collapsed');
+  } catch(e){ if (window.innerWidth < 720) $('#shell').classList.add('nav-collapsed'); }
   ME = user;
   // arriving from an invite link that routed through login: accept, then reload
   const invTok = new URLSearchParams(location.search).get('invite');
