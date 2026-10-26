@@ -542,6 +542,10 @@
     font-size:var(--fs-xs); color:var(--fg-2); }
   .oc-att{ font-family:var(--font-mono); color:var(--muted); margin-right:4px; }
   .oc-act{ color:var(--muted); }
+  .oc-dl{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:var(--fs-xs); }
+  .oc-dchip{ padding:2px 8px; border-radius:var(--r-pill); border:1px solid var(--line); color:var(--fg-2); background:var(--surface-2); }
+  .oc-dchip.ok{ color:var(--ok); border-color:color-mix(in oklab,var(--ok) 40%,transparent); background:var(--ok-soft); }
+  .oc-dchip.bad{ color:var(--err); border-color:color-mix(in oklab,var(--err) 45%,transparent); background:var(--err-soft); }
   .oc-obj{ font-size:var(--fs-xs); color:var(--fg-2); border-top:1px solid var(--line); padding-top:8px; }
   .oc-k{ font-family:var(--font-mono); text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-right:6px; }
   .oc-v{ color:var(--muted); margin-left:6px; }
@@ -1985,6 +1989,11 @@ const _OC = {
   needs_you: {cls:'failed',    label:'needs you'},
 };
 const _OC_ACT = {retry:'retried', needs_you:'asked you', gave_up:'gave up'};
+function _dest(d){
+  if (!d) return '';
+  return {notify:'in-app', slack:`Slack ${d.channel||''}`, email:`email to ${d.to||''}`,
+          webhook:'webhook', data:d.label||'data'}[d.kind] || d.kind || '';
+}
 // list badge: a routine with a definition of done shows its latest OUTCOME
 function _taskBadge(t){
   const o = t.last_outcome;
@@ -2007,8 +2016,9 @@ function outcomeCard(t){
   if (!spec || spec.status !== 'published') return '';
   const outs = t.outcomes || [];
   const o = outs[0];
+  const dests = (spec.deliver_to||[]).map(_dest).filter(Boolean);
   const obj = `<div class="oc-obj"><span class="oc-k">Definition of done</span> ${esc(spec.objective||'')}
-    <span class="oc-v">v${spec.version} · ${spec.checks.length} check${spec.checks.length===1?'':'s'}</span></div>`;
+    <span class="oc-v">v${spec.version} · ${spec.checks.length} check${spec.checks.length===1?'':'s'}${dests.length?' · delivers to '+esc(dests.join(', ')):''}</span></div>`;
   if (!o) return `<div class="outcome-card oc-none">${obj}
     <div class="oc-sum">The next run will be verified against these checks.</div></div>`;
   const st = _OC[o.status] || {cls:'none', label:o.status};
@@ -2040,10 +2050,21 @@ function outcomeCard(t){
         <span class="oc-att">Attempt ${e.attempt}</span> ${esc(e.label||e.class)}
         <span class="oc-act">→ ${esc(_OC_ACT[e.action]||e.action||'')}${e.memory?` with ${esc(e.memory)} memory`:''}</span></li>`).join('')}
         ${o.status==='delivered' ? `<li><span class="oc-att">Attempt ${o.attempts}</span> verified <span class="oc-act">→ delivered</span></li>` : ''}</ol>` : ''}
+    ${(o.deliveries||[]).length ? `<div class="oc-dl"><span class="oc-k">Delivered to</span>
+      ${o.deliveries.map(d => `<span class="oc-dchip ${d.status==='sent'?'ok':d.status==='failed'?'bad':''}" title="${esc(d.last_error||'')}">${d.status==='sent'?'✓':d.status==='failed'?'✗':'…'} ${esc(d.target||d.kind)}</span>`).join('')}
+      ${o.deliveries.some(d=>d.status==='failed') ? `<a href="#" onclick="redeliverOutcome(${o.id});return false">retry delivery</a>` : ''}</div>` : ''}
     <div class="oc-foot"><span>${esc(meta)}</span>${outs.length>1?`<span class="oc-hist">recent ${hist}</span>`:''}</div>
     ${obj}
   </div>`;
 }
+window.redeliverOutcome = async (oid) => {
+  try {
+    const o = await api('/api/outcomes/'+oid+'/deliver', {method:'POST'});
+    const bad = (o.deliveries||[]).filter(d => d.status==='failed');
+    toast(bad.length ? `Still couldn't deliver: ${bad[0].last_error||''}` : 'Delivered', bad.length ? 'err' : 'ok');
+  } catch(e){ toast(e.detail||e.message||'error','err'); }
+  if (CURRENT_TASK_ID) openTask(CURRENT_TASK_ID);
+};
 window.reverifyOutcome = async (oid) => {
   try {
     const o = await api('/api/outcomes/'+oid+'/verify', {method:'POST'});

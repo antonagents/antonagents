@@ -44,7 +44,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import (auth, config, connectors, db, db_access, outcomes, providers, ratelimit, runner,
+from . import (auth, config, connectors, db, db_access, deliver, outcomes, providers, ratelimit, runner,
                scheduler, templates, verify)
 from .auth import current_user
 from .connectors import db_driver
@@ -1192,9 +1192,13 @@ async def put_job_spec(agent_id: int, body: JobSpecIn, user: dict = Depends(curr
     if (agent.get("kind") or "routine") == "chat":
         raise HTTPException(400, "job specs apply to routines, not chats")
     checks = await _validate_checks(body.checks, _org_id(user))
+    try:   # destinations (DNS lookups for webhooks run off the event loop)
+        deliver_to = await asyncio.to_thread(deliver.normalize_deliver_to, body.deliver_to)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     spec_id = await db.create_job_spec(
         agent_id, objective=body.objective.strip(), checks=checks,
-        deliver_to=body.deliver_to, constraints=body.constraints, budget=body.budget,
+        deliver_to=deliver_to, constraints=body.constraints, budget=body.budget,
         created_by=user["id"], publish=body.publish)
     return {"spec": await db.get_spec(spec_id)}
 
@@ -1226,6 +1230,17 @@ async def reverify_outcome(outcome_id: int, user: dict = Depends(current_user)):
         raise HTTPException(409, "the outcome is still running")
     # verification only — a manual re-check never launches new attempts
     return await outcomes.verify_outcome(outcome_id, recover=False)
+
+
+@app.post("/api/outcomes/{outcome_id}/deliver")
+async def redeliver_outcome(outcome_id: int, user: dict = Depends(current_user)):
+    """Retry failed deliveries of a verified outcome now. Never re-sends one that
+    already went out (deliveries are exactly-once)."""
+    o = await _owned_outcome_or_404(outcome_id, user)
+    if o["status"] != "delivered":
+        raise HTTPException(409, "only verified outcomes are delivered")
+    await deliver.deliver_outcome(outcome_id, force=True)
+    return await db.get_outcome(outcome_id)
 
 
 @app.post("/api/agents/{agent_id}/outcomes/backfill")

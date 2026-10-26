@@ -11,7 +11,13 @@
 > runs, per-run failure alerts suppressed for attempts.
 > Not yet: resuming a timed-out session (the harness only reports the session id
 > on completion), provider *fallback* (only back-off), `connector` checks.
-> Steps 3–6 not started.
+> Step 3 — produce → verify → deliver: agent stages its message in
+> `outbox/outcome-<id>.md` and is told not to send; after verification the engine
+> delivers exactly once per destination (in-app, Slack, Gmail/Outlook email,
+> webhook json/slack) as the routine owner, retries a failed destination 3× then
+> notifies once; webhooks are SSRF-guarded; backfills never deliver. Slack/email
+> sends are not yet exercised live (no connected Slack/mailbox on the pilot account).
+> Steps 4–6 not started.
 > Positioning decision behind it: see `positioning` memory — "outcome-based, not
 > ask-and-it-does".
 

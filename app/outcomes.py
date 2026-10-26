@@ -15,7 +15,7 @@ import logging
 import re
 from typing import Optional
 
-from . import config, db, verify
+from . import config, db, deliver, verify
 
 log = logging.getLogger("antonagents.outcomes")
 
@@ -27,9 +27,19 @@ def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def prompt_addendum(spec: dict) -> str:
+def prompt_addendum(spec: dict, outcome_id: Optional[int] = None) -> str:
     """Tell the agent the definition of done and ask for a delivery manifest."""
     checks = "\n".join(f"- {c['name']}" for c in spec["checks"])
+    dests = deliver.message_destinations(spec)
+    delivery = ""
+    if dests and outcome_id:
+        where = ", ".join(deliver.describe(d) for d in dests)
+        delivery = (
+            f"\n\nDELIVERY: write the message for the team to "
+            f"/workspace/{deliver.outbox_path(outcome_id)} (Markdown, concise — what changed "
+            f"and what matters). Do NOT post, message or email it yourself: after independent "
+            f"verification it is delivered once to: {where}. If verification fails, nothing "
+            f"is sent.")
     return (
         "---\n"
         "DEFINITION OF DONE — this job is verified independently after you finish; "
@@ -43,6 +53,7 @@ def prompt_addendum(spec: dict) -> str:
         "```\n"
         'If you could not complete the job, set "blocked" to the reason instead of '
         "claiming success."
+        + delivery
     )
 
 
@@ -65,11 +76,12 @@ async def begin_attempt(run_id: int, agent: dict, run: dict) -> Optional[str]:
     spec = await db.get_published_spec(agent["id"])
     if not spec or not spec["checks"]:
         return None
-    if not run.get("outcome_id"):
+    oid = run.get("outcome_id")
+    if not oid:
         oid = await db.create_outcome(agent["id"], agent["org_id"], spec, trigger="run",
                                       started_at=run.get("created_at"))
         await db.link_run_to_outcome(run_id, oid)
-    return prompt_addendum(spec)
+    return prompt_addendum(spec, oid)
 
 
 async def finish_attempt(run_id: int) -> None:
@@ -164,6 +176,11 @@ async def verify_outcome(outcome_id: int, attempt: Optional[int] = None,
             next_attempt_at=None, needs_you_reason=None,
             receipt_json=json.dumps(receipt), cost_usd=cost,
             manifest_json=json.dumps(manifest) if manifest else None)
+        # step 3: only now — verified — does anything reach the team (exactly once)
+        try:
+            await deliver.deliver_outcome(outcome_id)
+        except Exception:  # noqa: BLE001
+            log.exception("delivery failed for outcome %s", outcome_id)
         return await db.get_outcome(outcome_id)
 
     receipt = _receipt(o, spec, results, run, False, strength)
@@ -377,6 +394,10 @@ async def recovery_loop() -> None:
                     log.exception("could not launch recovery for outcome %s", o["id"])
         except Exception:  # noqa: BLE001
             log.exception("recovery loop tick failed")
+        try:
+            await deliver.retry_due()                  # failed deliveries due a retry
+        except Exception:  # noqa: BLE001
+            log.exception("delivery retry tick failed")
         await asyncio.sleep(RECOVERY_TICK_S)
 
 

@@ -284,6 +284,25 @@ CREATE TABLE IF NOT EXISTS check_results (
     created_at TEXT NOT NULL
 );
 
+-- one row per (outcome, destination): the unique key is what makes delivery
+-- exactly-once across retries, re-verifies and restarts
+CREATE TABLE IF NOT EXISTS deliveries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    outcome_id  INTEGER NOT NULL REFERENCES outcomes(id) ON DELETE CASCADE,
+    idx         INTEGER NOT NULL,                    -- position in spec.deliver_to
+    kind        TEXT NOT NULL,                       -- notify | slack | email | webhook
+    target      TEXT,
+    status      TEXT NOT NULL DEFAULT 'pending',     -- pending | sent | failed
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    last_error  TEXT,
+    response    TEXT,
+    next_try_at TEXT,
+    sent_at     TEXT,
+    created_at  TEXT NOT NULL,
+    UNIQUE(outcome_id, idx)
+);
+CREATE INDEX IF NOT EXISTS idx_deliveries_retry ON deliveries(status, next_try_at);
+
 CREATE INDEX IF NOT EXISTS idx_job_specs_agent ON job_specs(agent_id, status);
 CREATE INDEX IF NOT EXISTS idx_job_checks_spec ON job_checks(spec_id, position);
 CREATE INDEX IF NOT EXISTS idx_outcomes_agent ON outcomes(agent_id, id);
@@ -1673,6 +1692,7 @@ async def get_outcome(outcome_id: int) -> Optional[dict]:
         """SELECT id, attempt, status, exit_code, started_at, finished_at, cost_usd, error
            FROM runs WHERE outcome_id=? ORDER BY attempt""", (outcome_id,))
     o["runs"] = [dict(x) for x in await cur.fetchall()]
+    o["deliveries"] = await list_deliveries(outcome_id)
     return o
 
 
@@ -1722,3 +1742,40 @@ async def outcome_cost(outcome_id: int) -> float:
     cur = await _db.execute(
         "SELECT coalesce(sum(cost_usd),0) FROM runs WHERE outcome_id=?", (outcome_id,))
     return float((await cur.fetchone())[0] or 0)
+
+
+async def claim_delivery(outcome_id: int, idx: int, kind: str, target: Optional[str]) -> dict:
+    """Get the delivery row for one destination of an outcome, creating it once."""
+    await _db.execute(
+        """INSERT OR IGNORE INTO deliveries (outcome_id, idx, kind, target, status, created_at)
+           VALUES (?,?,?,?, 'pending', ?)""", (outcome_id, idx, kind, target, _now()))
+    await _db.commit()
+    cur = await _db.execute("SELECT * FROM deliveries WHERE outcome_id=? AND idx=?",
+                            (outcome_id, idx))
+    return dict(await cur.fetchone())
+
+
+async def mark_delivery(delivery_id: int, *, status: str, error: Optional[str] = None,
+                        response: Optional[str] = None,
+                        next_try_at: Optional[str] = None) -> None:
+    await _db.execute(
+        """UPDATE deliveries SET status=?, attempts=attempts+1, last_error=?, response=?,
+               next_try_at=?, sent_at=CASE WHEN ?='sent' THEN ? ELSE sent_at END
+           WHERE id=?""",
+        (status, error, response, next_try_at, status, _now(), delivery_id))
+    await _db.commit()
+
+
+async def list_deliveries(outcome_id: int) -> list[dict]:
+    cur = await _db.execute(
+        "SELECT id, idx, kind, target, status, attempts, last_error, sent_at, next_try_at "
+        "FROM deliveries WHERE outcome_id=? ORDER BY idx", (outcome_id,))
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def due_delivery_retries() -> list[int]:
+    """Outcome ids with a failed delivery whose retry time has come."""
+    cur = await _db.execute(
+        "SELECT DISTINCT outcome_id FROM deliveries "
+        "WHERE status='failed' AND next_try_at IS NOT NULL AND next_try_at <= ?", (_now(),))
+    return [r[0] for r in await cur.fetchall()]
