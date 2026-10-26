@@ -55,6 +55,18 @@
 > person stepping in starts a fresh attempt budget (cost cap still applies).
 > Judge model: `SUPERAGENT_JUDGE_PROVIDER` / `SUPERAGENT_JUDGE_MODEL` (default:
 > the default provider). Judge calls are not yet metered into outcome cost.
+> **Delegate a job + escalations (2026-10-26):** "Delegate a job" on Routines (and
+> "Save as job" in a chat) — describe the job, the planner drafts the whole routine
+> (name, instructions, schedule in server time, connectors, data sources) plus its
+> definition of done; review it in one form; *Dry run first* (created paused, goes
+> live after a verified run), *Create & go live*, or *Save as draft*. Save-as-job plans
+> from the conversation and copies the chat's workspace (minus SDK session state).
+> Escalations: each spec has `escalate_to` (owner email via platform SMTP, Slack,
+> email via the owner's mailbox, webhook — Slack incoming webhooks work without a
+> connector); default = owner email when SMTP is configured, `[]` = in-app only.
+> Fired on needs-you, awaiting approval, gave up and permanently failed delivery;
+> sent once per destination per round, retried 3× (config errors aren't retried),
+> with a deep link to `/app/routines/<id>`.
 > Positioning decision behind it: see `positioning` memory — "outcome-based, not
 > ask-and-it-does".
 

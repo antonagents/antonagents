@@ -183,3 +183,28 @@ OPERATOR_EMAILS = {
 # grading its own work.
 JUDGE_PROVIDER = os.environ.get("SUPERAGENT_JUDGE_PROVIDER") or None
 JUDGE_MODEL = os.environ.get("SUPERAGENT_JUDGE_MODEL") or None
+
+# Public origin used in links that leave the app (escalation emails/Slack). Falls
+# back to the origin of the OAuth redirect URI when that isn't localhost.
+def _public_url() -> str:
+    v = os.environ.get("SUPERAGENT_PUBLIC_URL", "").rstrip("/")
+    if v:
+        return v
+    from urllib.parse import urlparse
+    for var in ("GOOGLE_REDIRECT_URI", "COMPOSIO_REDIRECT_URI"):
+        u = urlparse(os.environ.get(var, ""))
+        if u.netloc and "localhost" not in u.netloc:
+            return f"{u.scheme}://{u.netloc}"
+    return ""
+
+
+PUBLIC_URL = _public_url()
+
+# Optional platform mail (escalations to a routine's owner). Unset → owner email
+# escalations are skipped; Slack/email via connectors and webhooks still work.
+SMTP_HOST = os.environ.get("SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587") or 587)
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_FROM = os.environ.get("SMTP_FROM", "") or SMTP_USER
+SMTP_TLS = os.environ.get("SMTP_TLS", "starttls")      # starttls | ssl | none

@@ -44,11 +44,11 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import (auth, config, connectors, db, db_access, deliver, ledger, outcomes, planner, providers, ratelimit, runner,
+from . import (auth, config, connectors, db, db_access, deliver, escalate, ledger, outcomes, planner, providers, ratelimit, runner,
                scheduler, templates, verify)
 from .auth import current_user
 from .connectors import db_driver
-from .models import (BaselineIn, FlagIn, ReviewIn, AgentAlertsIn, AgentConnectorsIn, AgentCreate, AgentModelIn, AgentNameIn,
+from .models import (BaselineIn, FlagIn, JobCreateIn, JobPlanIn, ReviewIn, AgentAlertsIn, AgentConnectorsIn, AgentCreate, AgentModelIn, AgentNameIn,
                      AgentDbConnectionsIn, AgentScheduleIn, AgentSkillsIn, ApiKeyIn,
                      DbConnectionIn, DbConnectionTestIn, DbConnectionUpdateIn,
                      InvitationIn, JobSpecIn, LoginIn, MemberRoleIn, ResolveIn,
@@ -1155,21 +1155,37 @@ async def get_job_spec(agent_id: int, user: dict = Depends(current_user)):
     return {"spec": await db.get_latest_spec(agent_id)}
 
 
+async def _save_spec(agent_id: int, body: JobSpecIn, user: dict, publish: bool) -> int:
+    """Validate a definition of done and store it as a new version."""
+    checks = await _validate_checks(body.checks, _org_id(user))
+    try:   # destinations (DNS lookups for webhooks run off the event loop)
+        deliver_to = await asyncio.to_thread(deliver.normalize_deliver_to, body.deliver_to)
+        escalate_to = await asyncio.to_thread(escalate.normalize, body.escalate_to)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return await db.create_job_spec(
+        agent_id, objective=body.objective.strip(), checks=checks,
+        deliver_to=deliver_to, constraints=body.constraints, budget=body.budget,
+        escalate_to=escalate_to, created_by=user["id"], publish=publish)
+
+
+async def _start_dry_run(agent: dict, spec_id: int) -> dict:
+    """One real attempt against a draft spec: verified, never delivered or retried."""
+    spec = await db.get_spec(spec_id)
+    oid = await db.create_outcome(agent["id"], agent["org_id"], spec, trigger="dry_run")
+    run_id = await db.create_run(agent["id"], prompt=agent["prompt"])
+    await db.link_run_to_outcome(run_id, oid)
+    await runner.start_run(run_id, agent)
+    return {"outcome_id": oid, "run_id": run_id, "spec_id": spec_id}
+
+
 @app.put("/api/agents/{agent_id}/spec")
 async def put_job_spec(agent_id: int, body: JobSpecIn, user: dict = Depends(current_user)):
     """Save a new version of a routine's definition of done (optionally publish it)."""
     agent = await _owned_agent_or_404(agent_id, user)
     if (agent.get("kind") or "routine") == "chat":
         raise HTTPException(400, "job specs apply to routines, not chats")
-    checks = await _validate_checks(body.checks, _org_id(user))
-    try:   # destinations (DNS lookups for webhooks run off the event loop)
-        deliver_to = await asyncio.to_thread(deliver.normalize_deliver_to, body.deliver_to)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    spec_id = await db.create_job_spec(
-        agent_id, objective=body.objective.strip(), checks=checks,
-        deliver_to=deliver_to, constraints=body.constraints, budget=body.budget,
-        created_by=user["id"], publish=body.publish)
+    spec_id = await _save_spec(agent_id, body, user, body.publish)
     return {"spec": await db.get_spec(spec_id)}
 
 
@@ -1226,20 +1242,8 @@ async def dry_run_job_spec(agent_id: int, body: JobSpecIn, user: dict = Depends(
         raise HTTPException(400, "definitions of done apply to routines, not chats")
     if await db.inflight_outcome(agent_id):
         raise HTTPException(409, "this routine is already working on an outcome — try again when it finishes")
-    checks = await _validate_checks(body.checks, _org_id(user))
-    try:
-        deliver_to = await asyncio.to_thread(deliver.normalize_deliver_to, body.deliver_to)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    spec_id = await db.create_job_spec(
-        agent_id, objective=body.objective.strip(), checks=checks, deliver_to=deliver_to,
-        constraints=body.constraints, budget=body.budget, created_by=user["id"], publish=False)
-    spec = await db.get_spec(spec_id)
-    oid = await db.create_outcome(agent_id, agent["org_id"], spec, trigger="dry_run")
-    run_id = await db.create_run(agent_id, prompt=agent["prompt"])
-    await db.link_run_to_outcome(run_id, oid)
-    await runner.start_run(run_id, agent)
-    return {"outcome_id": oid, "run_id": run_id, "spec_id": spec_id}
+    spec_id = await _save_spec(agent_id, body, user, False)
+    return await _start_dry_run(agent, spec_id)
 
 
 @app.get("/api/ledger")
@@ -1284,6 +1288,114 @@ async def set_agent_baseline(agent_id: int, body: BaselineIn, user: dict = Depen
     await _owned_agent_or_404(agent_id, user)
     await db.set_baseline(agent_id, body.minutes)
     return {"baseline_minutes": body.minutes}
+
+
+# ---------------- delegate a job ----------------
+
+async def _owned_chat(chat_id: int | None, user: dict) -> dict | None:
+    if not chat_id:
+        return None
+    chat = await _owned_agent_or_404(chat_id, user)
+    if (chat.get("kind") or "routine") != "chat":
+        raise HTTPException(400, "from_chat_id must be a chat")
+    return chat
+
+
+@app.post("/api/jobs/plan")
+async def plan_job(body: JobPlanIn, user: dict = Depends(current_user)):
+    """Plain-language job (or a chat that already did it) → a draft job: name,
+    instructions, schedule, connectors, data sources and definition of done.
+    Nothing is saved."""
+    chat = await _owned_chat(body.from_chat_id, user)
+    if not chat and len(body.description.strip()) < 5:
+        raise HTTPException(400, "describe the job you want done")
+    from .llm import LLMError
+    try:
+        return await planner.plan_job(_org_id(user), user["id"], body.description, chat)
+    except LLMError as e:
+        raise HTTPException(502, f"The planner couldn't plan this: {e}")
+
+
+@app.post("/api/jobs")
+async def create_job(body: JobCreateIn, user: dict = Depends(current_user)):
+    """Create a job = a routine + its definition of done, in one step.
+    mode: live (publish + schedule, or run now for one-off jobs) · dry_run (paused
+    until a verified dry run, then go live) · draft (saved, nothing runs)."""
+    org = _org_id(user)
+    chat = await _owned_chat(body.from_chat_id, user)
+    if body.schedule_kind in ("cron", "interval"):
+        try:
+            scheduler.validate_schedule(body.schedule_kind, body.schedule_expr)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(400, f"invalid schedule: {e}")
+    # validate everything before creating anything
+    await _validate_checks(body.spec.checks, org)
+    try:
+        await asyncio.to_thread(deliver.normalize_deliver_to, body.spec.deliver_to)
+        await asyncio.to_thread(escalate.normalize, body.spec.escalate_to)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    valid_conn = {p["slug"] for p in connectors.get_connector().providers()}
+    owned_dbs = {c["id"] for c in await db.list_org_db_connections(org)}
+    if any(i not in owned_dbs for i in body.db_connection_ids):
+        raise HTTPException(400, "unknown data source")
+
+    agent_id = await db.create_agent(
+        {"name": body.name.strip(), "prompt": body.prompt.strip(), "schedule_kind": body.schedule_kind,
+         "schedule_expr": body.schedule_expr if body.schedule_kind != "once" else None,
+         "baseline_minutes": body.baseline_minutes}, org_id=org, owner_id=user["id"])
+    live = body.mode == "live"
+    if not live:
+        await db.set_agent_enabled(agent_id, False)      # paused until it goes live
+    await db.set_agent_connectors(agent_id, [p for p in body.connectors if p in valid_conn])
+    await db.set_agent_db_connections(agent_id, list(dict.fromkeys(body.db_connection_ids)))
+    if chat:
+        await runner.copy_workspace(chat["id"], agent_id)
+    spec_id = await _save_spec(agent_id, body.spec, user, live)
+    agent = await db.get_agent(agent_id)
+    out = {"agent_id": agent_id, "spec_id": spec_id, "mode": body.mode}
+    if live:
+        if body.schedule_kind in ("cron", "interval"):
+            scheduler.add_agent(agent)
+        else:                                            # a one-off job: do it now
+            run_id = await db.create_run(agent_id, prompt=agent["prompt"])
+            await runner.start_run(run_id, agent)
+            out["run_id"] = run_id
+    elif body.mode == "dry_run":
+        out.update(await _start_dry_run(agent, spec_id))
+    return out
+
+
+@app.post("/api/agents/{agent_id}/go-live")
+async def job_go_live(agent_id: int, user: dict = Depends(current_user)):
+    """Publish the routine's newest draft definition of done and switch it on
+    (scheduled jobs start on their schedule; one-off jobs run now)."""
+    agent = await _owned_agent_or_404(agent_id, user)
+    spec = await db.get_latest_spec(agent_id)
+    if not spec:
+        raise HTTPException(400, "this routine has no definition of done yet")
+    if await db.inflight_outcome(agent_id):
+        raise HTTPException(409, "it's still working on an outcome — try again when it finishes")
+    if spec["status"] != "published":
+        await db.publish_spec(spec["id"])
+    await db.set_agent_enabled(agent_id, True)
+    agent = await db.get_agent(agent_id)
+    out = {"agent_id": agent_id, "spec_version": spec["version"]}
+    if agent["schedule_kind"] in ("cron", "interval"):
+        scheduler.add_agent(agent)
+        out["next_run_at"] = scheduler.next_run_at(agent_id)
+    else:
+        run_id = await db.create_run(agent_id, prompt=agent["prompt"])
+        await runner.start_run(run_id, agent)
+        out["run_id"] = run_id
+    return out
+
+
+@app.get("/api/escalation-channels")
+async def escalation_channels(user: dict = Depends(current_user)):
+    """What a job can escalate to, for the editor."""
+    return {"owner_email": deliver.smtp_available(), "email": user.get("email"),
+            "connected": sorted(set(await db.active_providers(user["id"])) & {"slack", "gmail", "outlook"})}
 
 
 @app.get("/api/needs-you")

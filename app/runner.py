@@ -186,6 +186,25 @@ async def read_artifact(agent_id: int, ws_path: str) -> Optional[bytes]:
     return out
 
 
+async def copy_workspace(src_agent_id: int, dst_agent_id: int) -> bool:
+    """Copy one agent's workspace into another's ("save a chat as a job"), minus the
+    SDK session state. Runs as the image's agent user so the new volume is writable."""
+    if not await _volume_exists(src_agent_id):
+        return False
+    proc = await asyncio.create_subprocess_exec(
+        "docker", "run", "--rm", "--network", "none",
+        "-v", f"{agent_volume(src_agent_id)}:/from:ro",
+        "-v", f"{agent_volume(dst_agent_id)}:/workspace:rw",
+        "--entrypoint", "sh", config.TASK_IMAGE, "-c",
+        "cd /from && tar cf - --exclude=./.claude --exclude=./.cache . | tar xf - -C /workspace",
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+    try:
+        _, err = await asyncio.wait_for(proc.communicate(), timeout=300)
+    except Exception:  # noqa: BLE001
+        return False
+    return proc.returncode == 0
+
+
 async def write_upload(agent_id: int, filename: str, data: bytes) -> str:
     """Write a user-uploaded file into the agent's workspace under uploads/, via a
     throwaway helper container (mirror of read_artifact, mounted :rw). `filename`

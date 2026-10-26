@@ -173,3 +173,166 @@ async def draft(agent: dict, description: str) -> dict:
                     "runs_seen": len(ctx["recent_successful_runs"]),
                     "channels": ctx["delivery_channels_connected"]},
     }
+
+
+# ---------------- delegate a job: plan the whole routine, not just its checks ----------------
+
+def _server_tz() -> str:
+    import datetime as _dt
+    now = _dt.datetime.now().astimezone()
+    off = now.utcoffset() or _dt.timedelta(0)
+    h, m = divmod(int(off.total_seconds()) // 60, 60)
+    return f"{now.tzname()} (UTC{'+' if off >= _dt.timedelta(0) else '-'}{abs(h):02d}:{m:02d})"
+
+
+_JOB_SYSTEM = """You turn a plain-language job into a complete, runnable job for an AI agent that
+works in a sandboxed Linux workspace with Python, a shell, the web, and only the connectors
+and data sources listed in the context. Return ONLY one JSON object:
+{
+ "name": "short name for the job (max 60 chars)",
+ "instructions": "what the agent does EVERY time it runs — specific, step by step, naming the
+   data sources/tables, files it writes (relative paths, e.g. output/report.md), and the
+   format of results. Writes to databases must be idempotent (upsert on a natural key,
+   never delete). Do not tell it to post/email results itself — delivery is done for it.",
+ "schedule": {"kind": "once" | "cron", "expr": "5-field crontab or null",
+              "human": "e.g. every weekday at 09:00"},
+ "connectors": ["slugs from connectors_connected the job needs"],
+ "data_source_ids": [ids from data_sources the job needs],
+ "objective": "one sentence: the outcome, in the user's words",
+ "checks": [ ...1 to 6 checks, as defined below... ],
+ "deliver_to": [ ...destinations... ],
+ "budget": {"max_attempts": 3},
+ "notes": "assumptions, and anything the user must do first (e.g. connect Slack)"
+}
+
+SCHEDULE: cron runs in the server's timezone given in context. "once" = run one time now.
+
+CHECKS run independently after the agent finishes, read-only; they must PASS only when the
+job really happened. Prefer deterministic kinds:
+1. {"kind":"sql","name":"...","config":{"connection_id":<id>,"query":"SELECT ... one value",
+    "expect":">= N" | "between A and B" | "nonempty"},"required":true}
+   Use {date} for the run's UTC date. Only tables/columns from that source's schema.
+2. {"kind":"artifact","name":"...","config":{"path":"the relative path your instructions
+    tell the agent to write","non_empty":true,"modified_since_start":true,
+    "contains":"optional text"},"required":true}
+3. {"kind":"judge","name":"...","config":{"rubric":["concrete criterion answerable from the
+    text, quotable as evidence", ...1-6],"source":"file"|"outbox"|"result",
+    "path":"for file","threshold":0.8},"required":true}  — only for qualitative content.
+    Criteria must be positive and quotable ("names 3 competitors with prices"), never
+    absence ("contains no X").
+4. {"kind":"human","name":"...","config":{"mode":"approve"}} — only if the user asked to
+   approve before sending; {"mode":"sample","rate":0.2} if they asked to spot-check.
+
+DESTINATIONS: always {"kind":"notify"}. {"kind":"owner"} = email the user (only if
+owner_email_available). {"kind":"slack","channel":"#x"} / {"kind":"email","to":"a@b.co"} only
+if the user asked AND that app is in connectors_connected. {"kind":"data","label":"..."} for
+data the agent writes itself.
+
+Never invent connectors, data sources, tables or columns. If the job needs an app that
+isn't connected, plan it anyway and say so in notes."""
+
+
+async def gather_job_context(org_id: int, owner_id: int, chat: Optional[dict] = None) -> dict:
+    from .connectors import get_connector
+    sources = []
+    for c in await db.list_org_db_connections(org_id):
+        sources.append({"id": c["id"], "name": c["name"], "engine": c["engine"],
+                        "schema": await _schema(c)})
+    active = await db.active_providers(owner_id)
+    try:
+        known = {p["slug"]: p.get("label") for p in get_connector().providers()}
+    except Exception:  # noqa: BLE001
+        known = {}
+    ctx = {"server_timezone": _server_tz(),
+           "connectors_connected": sorted(active),
+           "connectors_available_not_connected": sorted(set(known) - set(active)),
+           "data_sources": sources,
+           "owner_email_available": deliver.smtp_available()}
+    if chat:   # "save as job": what the conversation actually did
+        turns = []
+        for r in reversed(await db.list_runs(chat["id"], limit=12)):
+            full = await db.get_run(r["id"])
+            turns.append({"user": (full.get("prompt") or "")[:1500],
+                          "agent": (full.get("result") or full.get("error") or "")[:1500]})
+        ctx["conversation"] = turns
+        ctx["chat_workspace_files"] = await _files(chat["id"])
+    return ctx
+
+
+async def plan_job(org_id: int, owner_id: int, description: str,
+                   chat: Optional[dict] = None) -> dict:
+    """Plain-language job (or a chat that did it) → a reviewable job + definition of done."""
+    from . import scheduler
+    ctx = await gather_job_context(org_id, owner_id, chat)
+    ask = description.strip() or "Turn what this conversation did into a recurring job."
+    user = ("THE JOB, in the user's words:\n" + ask + "\n\nGROUNDED CONTEXT (read-only):\n"
+            + json.dumps(ctx, indent=1, default=str)[:30000])
+    raw = llm.extract_json(await llm.complete(_JOB_SYSTEM, user, max_tokens=5000, timeout=180))
+    if not raw:
+        raise llm.LLMError("the planner didn't return a usable plan — try rephrasing")
+    warnings = []
+    sched = raw.get("schedule") or {}
+    kind, expr = sched.get("kind"), sched.get("expr")
+    if kind == "cron":
+        try:
+            scheduler.validate_schedule("cron", expr)
+        except Exception:  # noqa: BLE001
+            warnings.append(f"The proposed schedule '{expr}' isn't valid — set it below.")
+            kind, expr = "cron", "0 9 * * *"
+    else:
+        kind, expr = "once", None
+    connected = set(ctx["connectors_connected"])
+    conns = [c for c in raw.get("connectors") or [] if isinstance(c, str)]
+    missing = [c for c in conns if c not in connected]
+    if missing:
+        warnings.append(f"Needs {', '.join(missing)} — connect {'it' if len(missing) == 1 else 'them'} "
+                        "in Connectors first.")
+    src_ids = {s["id"] for s in ctx["data_sources"]}
+    dbs = []
+    for i in raw.get("data_source_ids") or []:
+        try:
+            if int(i) in src_ids:
+                dbs.append(int(i))
+        except (TypeError, ValueError):
+            pass
+    checks = []
+    for c in (raw.get("checks") or [])[:6]:
+        try:
+            checks.append(await verify.validate_check(c, org_id))
+        except ValueError as e:
+            warnings.append(f"Dropped a check: {e}")
+    # a SQL check implies the routine needs that data source
+    for c in checks:
+        cid = c["config"].get("connection_id") if c["kind"] == "sql" else None
+        if cid and cid not in dbs:
+            dbs.append(cid)
+    dests = []
+    for d in raw.get("deliver_to") or [{"kind": "notify"}]:
+        try:
+            dests += deliver.normalize_deliver_to([d])
+        except ValueError as e:
+            warnings.append(f"Dropped a destination: {e}")
+    if not checks:
+        warnings.append("No runnable checks were proposed — add at least one before it goes live.")
+    try:
+        attempts = max(1, min(5, int((raw.get("budget") or {}).get("max_attempts") or 3)))
+    except (TypeError, ValueError):
+        attempts = 3
+    return {
+        "job": {"name": str(raw.get("name") or "New job")[:60],
+                "prompt": str(raw.get("instructions") or "")[:20000],
+                "schedule_kind": kind, "schedule_expr": expr,
+                "schedule_human": str(sched.get("human") or "")[:80],
+                "connectors": [c for c in conns if c in connected],
+                "db_connection_ids": dbs},
+        "draft": {"objective": str(raw.get("objective") or ask)[:2000], "checks": checks,
+                  "deliver_to": dests or [{"kind": "notify"}],
+                  "budget": {"max_attempts": attempts}},
+        "notes": str(raw.get("notes") or "")[:1500],
+        "warnings": warnings,
+        "context": {"data_sources": [s["name"] for s in ctx["data_sources"]],
+                    "connectors": ctx["connectors_connected"],
+                    "owner_email": ctx["owner_email_available"],
+                    "timezone": ctx["server_timezone"],
+                    "from_chat": bool(chat)},
+    }

@@ -303,6 +303,28 @@ CREATE TABLE IF NOT EXISTS deliveries (
 );
 CREATE INDEX IF NOT EXISTS idx_deliveries_retry ON deliveries(status, next_try_at);
 
+-- escalations: telling a person an outcome needs them, outside the app (once per
+-- destination per escalation round)
+CREATE TABLE IF NOT EXISTS escalations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    outcome_id  INTEGER NOT NULL REFERENCES outcomes(id) ON DELETE CASCADE,
+    event       TEXT NOT NULL,                       -- needs_you | approval | failed | delivery_failed
+    round       INTEGER NOT NULL,                    -- position in the outcome's history
+    idx         INTEGER NOT NULL,                    -- position in escalate_to
+    kind        TEXT NOT NULL,
+    target      TEXT,
+    title       TEXT,
+    body        TEXT,
+    status      TEXT NOT NULL DEFAULT 'pending',     -- pending | sent | failed
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    last_error  TEXT,
+    next_try_at TEXT,
+    sent_at     TEXT,
+    created_at  TEXT NOT NULL,
+    UNIQUE(outcome_id, event, round, idx)
+);
+CREATE INDEX IF NOT EXISTS idx_escalations_retry ON escalations(status, next_try_at);
+
 CREATE INDEX IF NOT EXISTS idx_job_specs_agent ON job_specs(agent_id, status);
 CREATE INDEX IF NOT EXISTS idx_job_checks_spec ON job_checks(spec_id, position);
 CREATE INDEX IF NOT EXISTS idx_outcomes_agent ON outcomes(agent_id, id);
@@ -362,6 +384,7 @@ async def init() -> None:
     await _ensure_column("runs", "usage_json", "TEXT")
     await _ensure_column("runs", "cost_basis", "TEXT")
     await _ensure_column("outcomes", "flagged_at", "TEXT")      # "this outcome was wrong"
+    await _ensure_column("job_specs", "escalate_to_json", "TEXT")  # None = default (owner email)
     await _ensure_column("outcomes", "flag_note", "TEXT")
     # human checks (step 6): approval gate + sampled spot-checks
     for col in ("review_requested_at", "reviewed_at", "reviewed_by", "review_note", "review_verdict"):
@@ -1628,7 +1651,8 @@ def _unj(v):
 
 async def create_job_spec(agent_id: int, *, objective: str, checks: list[dict],
                           deliver_to=None, constraints=None, budget=None,
-                          created_by: Optional[int] = None, publish: bool = False) -> int:
+                          created_by: Optional[int] = None, publish: bool = False,
+                          escalate_to=None) -> int:
     """Save a new spec version for an agent. Publishing archives the previous
     published version, so an agent has at most one live definition of done."""
     cur = await _db.execute(
@@ -1640,10 +1664,10 @@ async def create_job_spec(agent_id: int, *, objective: str, checks: list[dict],
             (agent_id,))
     cur = await _db.execute(
         """INSERT INTO job_specs (agent_id, version, status, objective, deliver_to_json,
-               constraints_json, budget_json, created_by, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
+               constraints_json, budget_json, escalate_to_json, created_by, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
         (agent_id, version, "published" if publish else "draft", objective,
-         _j(deliver_to), _j(constraints), _j(budget), created_by, _now()))
+         _j(deliver_to), _j(constraints), _j(budget), _j(escalate_to), created_by, _now()))
     spec_id = cur.lastrowid
     for i, ch in enumerate(checks):
         await _db.execute(
@@ -1659,7 +1683,7 @@ async def _spec_with_checks(row) -> Optional[dict]:
     if not row:
         return None
     s = dict(row)
-    for k in ("deliver_to", "constraints", "budget"):
+    for k in ("deliver_to", "constraints", "budget", "escalate_to"):
         s[k] = _unj(s.pop(f"{k}_json", None))
     cur = await _db.execute(
         "SELECT * FROM job_checks WHERE spec_id=? ORDER BY position", (s["id"],))
@@ -1670,6 +1694,17 @@ async def _spec_with_checks(row) -> Optional[dict]:
         c["required"] = bool(c["required"])
         s["checks"].append(c)
     return s
+
+
+async def publish_spec(spec_id: int) -> None:
+    """Make a draft spec the live one (archives the previously published version)."""
+    row = await (await _db.execute("SELECT agent_id FROM job_specs WHERE id=?", (spec_id,))).fetchone()
+    if not row:
+        return
+    await _db.execute("UPDATE job_specs SET status='archived' WHERE agent_id=? AND status='published'",
+                      (row["agent_id"],))
+    await _db.execute("UPDATE job_specs SET status='published' WHERE id=?", (spec_id,))
+    await _db.commit()
 
 
 async def get_published_spec(agent_id: int) -> Optional[dict]:
@@ -1776,6 +1811,7 @@ async def get_outcome(outcome_id: int) -> Optional[dict]:
            FROM runs WHERE outcome_id=? ORDER BY attempt""", (outcome_id,))
     o["runs"] = [dict(x) for x in await cur.fetchall()]
     o["deliveries"] = await list_deliveries(outcome_id)
+    o["escalations"] = await list_escalations(outcome_id)
     return o
 
 
@@ -1890,6 +1926,43 @@ async def mark_delivery(delivery_id: int, *, status: str, error: Optional[str] =
            WHERE id=?""",
         (status, error, response, next_try_at, status, _now(), delivery_id))
     await _db.commit()
+
+
+async def claim_escalation(outcome_id: int, event: str, rnd: int, idx: int, kind: str,
+                           target: str, title: str, body: str) -> Optional[dict]:
+    """Create the escalation row once; returns it only if THIS call created it."""
+    cur = await _db.execute(
+        """INSERT OR IGNORE INTO escalations (outcome_id, event, round, idx, kind, target, title,
+               body, status, created_at) VALUES (?,?,?,?,?,?,?,?, 'pending', ?)""",
+        (outcome_id, event, rnd, idx, kind, target, title, body, _now()))
+    await _db.commit()
+    if not cur.rowcount:
+        return None
+    row = await (await _db.execute("SELECT * FROM escalations WHERE id=?", (cur.lastrowid,))).fetchone()
+    return dict(row)
+
+
+async def mark_escalation(esc_id: int, *, status: str, error: Optional[str] = None,
+                          next_try_at: Optional[str] = None) -> None:
+    await _db.execute(
+        """UPDATE escalations SET status=?, attempts=attempts+1, last_error=?, next_try_at=?,
+               sent_at=CASE WHEN ?='sent' THEN ? ELSE sent_at END WHERE id=?""",
+        (status, error, next_try_at, status, _now(), esc_id))
+    await _db.commit()
+
+
+async def due_escalations() -> list[dict]:
+    cur = await _db.execute(
+        "SELECT * FROM escalations WHERE status='failed' AND next_try_at IS NOT NULL AND next_try_at <= ?",
+        (_now(),))
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def list_escalations(outcome_id: int) -> list[dict]:
+    cur = await _db.execute(
+        "SELECT id, event, round, kind, target, status, attempts, last_error, sent_at FROM escalations "
+        "WHERE outcome_id=? ORDER BY id", (outcome_id,))
+    return [dict(r) for r in await cur.fetchall()]
 
 
 async def list_deliveries(outcome_id: int) -> list[dict]:

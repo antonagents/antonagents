@@ -1173,7 +1173,7 @@
               <select id="chatModel" class="chat-model" title="Model for this chat" onchange="setChatModel()" style="display:none"></select>
               <button class="ghost" id="filesBtn" onclick="openFiles(CURRENT_CHAT_ID)" style="display:none">Artifacts</button>
               <button class="ghost" id="apiBtn" onclick="openApiKeys(CURRENT_CHAT_ID)" style="display:none">API</button>
-              <button class="ghost" id="saveRoutineBtn" onclick="saveChatAsRoutine()" style="display:none">Save as routine</button>
+              <button class="ghost" id="saveRoutineBtn" onclick="openDelegate('', CURRENT_CHAT_ID)" style="display:none" title="Turn what this chat did into a job that runs on its own and proves each run">Save as job</button>
             </span>
           </div>
           <div class="placeholder" id="chatEmpty">Start a new chat and ask your assistant to do something — it can use every tool you've connected.</div>
@@ -1212,10 +1212,12 @@
             <div id="templates"></div>
           </div>
           <div class="panel nr-hero">
-            <p class="eyebrow">Recommended</p>
-            <h3 class="nr-hero-h">Build it in a chat, then schedule it</h3>
-            <p class="hint" style="margin:var(--sp-2) 0 var(--sp-4)">Start a chat and get the agent doing exactly what you want, using your data, tools, and files. When it works, hit <b>Save as routine</b> to put it on a schedule. You prove it before you rely on it.</p>
-            <button onclick="startRoutineInChat()">Start in chat &rarr;</button>
+            <p class="eyebrow">Delegate a job</p>
+            <h3 class="nr-hero-h">Say what you want done. Get the outcome.</h3>
+            <p class="hint" style="margin:var(--sp-2) 0 var(--sp-3)">Describe the job and when it should happen. You review the plan — instructions, schedule and the checks that prove each run really happened — then it runs, recovers on its own, and only asks you when it has to.</p>
+            <textarea id="delegateDesc" class="modal-input" rows="3" placeholder="e.g. Every weekday at 8:00, check yesterday's orders for anomalies and send me a short briefing with the order IDs."></textarea>
+            <div class="oc-cta" style="margin-top:var(--sp-3)"><button onclick="openDelegate($('#delegateDesc').value)">Plan it &rarr;</button>
+              <a href="#" class="dod-sum" onclick="startRoutineInChat();return false">or work it out in a chat first, then save it as a job</a></div>
           </div>
 
           <details class="panel nr-manual">
@@ -1773,6 +1775,8 @@ function routeFromPath(){
   const p = location.pathname.replace(/\/+$/,'');
   let m = p.match(/^\/app\/chat\/(\d+)$/);
   if (m) return {view:'chat', chat:Number(m[1])};
+  m = p.match(/^\/app\/routines\/(\d+)$/);
+  if (m) return {view:'routines', routine:Number(m[1])};
   m = p.match(/^\/app\/(routines|outcomes|connectors|data|alerts|members|observability)$/);
   if (m) return {view:m[1]};
   return {view:'chat'};                       // /app (or anything else) → chat welcome
@@ -1786,6 +1790,7 @@ async function applyRoute(){
     else showWelcome(true);
   } else {
     showView(r.view, {replace:true});
+    if (r.routine) openTask(r.routine).catch(() => {});
   }
 }
 window.addEventListener('popstate', () => { applyRoute(); });
@@ -2117,7 +2122,8 @@ function outcomeCard(t){
   if ((t.kind||'routine') === 'chat') return '';
   if (!spec || spec.status !== 'published') return `<div class="outcome-card oc-none"><div class="oc-cta">
     <span class="oc-sum">${spec ? `A draft definition of done (v${spec.version}) isn't live yet.` : 'No definition of done — runs are reported, not verified.'}</span>
-    <a href="#" onclick="openDod(${t.id});return false">${spec ? 'Review &amp; publish' : 'Define what done means'}</a></div></div>`;
+    <a href="#" onclick="openDod(${t.id});return false">${spec ? 'Review &amp; publish' : 'Define what done means'}</a>
+    ${spec && !t.enabled ? `<button class="sm" onclick="goLive(${t.id})">Go live</button>` : ''}</div></div>`;
   const outs = t.outcomes || [];
   const o = outs[0];
   const dests = (spec.deliver_to||[]).map(_dest).filter(Boolean);
@@ -2158,6 +2164,8 @@ function outcomeCard(t){
     ${o.status === 'recovering' && o.next_attempt_at ? `<div class="oc-note">Next attempt ${esc(_ocTime(o.next_attempt_at))}</div>` : ''}
     ${o.status === 'awaiting_approval' ? _reviewBox(o.id, r.delivery_preview, 'approval') : ''}
     ${o.status === 'delivered' && o.review_requested_at && !o.reviewed_at ? _reviewBox(o.id, null, 'spot_check') : ''}
+    ${(o.escalations||[]).length ? `<div class="oc-dl"><span class="oc-k">Told you via</span>
+      ${o.escalations.map(e => `<span class="oc-dchip ${e.status==='sent'?'ok':e.status==='failed'?'bad':''}" title="${esc(e.last_error||e.event)}">${e.status==='sent'?'✓':e.status==='failed'?'✗':'…'} ${esc(e.target||e.kind)}</span>`).join('')}</div>` : ''}
     ${o.reviewed_at && o.review_verdict ? `<div class="oc-note">Reviewed by ${esc(o.reviewed_by||'an owner')} · ${esc({ok:'looks right',wrong:'marked wrong',rejected:'rejected'}[o.review_verdict]||o.review_verdict)}${o.review_note?' — '+esc(o.review_note):''}</div>` : ''}
     ${checks ? `<ul class="oc-checks">${checks}</ul>` : ''}
     ${(r.attempt_log||[]).length ? `<ol class="oc-steps">${r.attempt_log.map(e => `<li>
@@ -2246,17 +2254,27 @@ function _dodCheckSummary(c){
 window.openDod = async (agentId) => {
   let t; try { t = await api('/api/agents/'+agentId); } catch(e){ toast(e.detail||e.message||'error','err'); return; }
   clearTimeout(DOD && DOD.pollT);
-  DOD = {agentId, name:t.name, draft:null, notes:'', warnings:[], context:null};
+  DOD = {agentId, name:t.name, draft:null, notes:'', warnings:[], context:null, enabled:!!t.enabled};
   if (t.spec) DOD.draft = {objective:t.spec.objective||'',
     checks:(t.spec.checks||[]).map(c => ({kind:c.kind, name:c.name, config:c.config||{}, required:c.required!==false})),
     deliver_to:t.spec.deliver_to||[{kind:'notify'}], budget:t.spec.budget||{max_attempts:3},
-    status:t.spec.status, version:t.spec.version};
+    escalate_to:t.spec.escalate_to ?? null, status:t.spec.status, version:t.spec.version};
+  await _escChannels();
   $('#dodFor').textContent = t.name;
   _dodRender();
   $('#dodModal').style.display = 'flex';
 };
 window.closeDod = () => { if (DOD) clearTimeout(DOD.pollT); $('#dodModal').style.display = 'none'; };
 function _dodDescribeHtml(){
+  if (DOD.job !== undefined && !DOD.agentId) return `<p class="dod-lead">${DOD.fromChat
+      ? 'Turn what this chat did into a job that runs on its own. Add anything that should change — the schedule, where results go, what "done" means.'
+      : 'Say what you want done and when — in plain words. The planner drafts the whole job from your connected apps and data sources: the instructions, the schedule, and the checks that prove each run really happened.'}</p>
+    <textarea id="dodDesc" class="modal-input" rows="4" placeholder="${DOD.fromChat ? 'e.g. Do this every weekday at 8:00 and email me the result.' : 'e.g. Every weekday at 8:00, compare yesterday\'s orders with the 7-day average, flag anomalies with order IDs, and send me a short briefing.'}">${esc(DOD.seed||'')}</textarea>
+    <div class="modal-actions" style="justify-content:flex-start;margin-top:var(--sp-3)">
+      <button id="dodDraftBtn" onclick="jobPlan()">Plan it</button>
+      ${DOD.job ? '<button class="ghost" onclick="dodBackToForm()">Back to the plan</button>' : ''}
+      ${DOD.fromChat ? '<a href="#" class="dod-sum" onclick="closeDod();saveChatAsRoutine();return false">or save it as a plain routine (no checks)</a>' : ''}
+    </div><div id="dodOut" class="dod-out"></div>`;
   return `<p class="dod-lead">Describe the outcome you need from <b>${esc(DOD.name)}</b> — what has to be true when the job is really done.
     The planner looks at this routine's instructions, its recent runs, its workspace files and the schema of your data sources,
     then proposes checks that are run independently after every run.</p>
@@ -2283,7 +2301,15 @@ function _dodRender(view){
   const dests = d.deliver_to.map((x,i) => `<span class="oc-dchip">${esc(_dest(x))}
       <a href="#" onclick="dodRemoveDest(${i});return false" aria-label="Remove">✕</a></span>`).join('');
   const bud = d.budget || {};
+  const esc_ = d.escalate_to;            // null/undefined = default, [] = in-app only
+  const escChips = esc_ == null
+    ? `<span class="oc-dchip">${ESC_CH.owner_email ? 'Email to you (default)' : 'In-app only'}</span>
+       ${ESC_CH.owner_email ? '' : '<span class="dod-sum">Platform email isn\'t set up, so add Slack, an email via your mailbox, or a webhook to hear about it outside the app.</span>'}`
+    : esc_.map((x,i) => `<span class="oc-dchip">${esc(_dest(x))}<a href="#" onclick="dodRemoveEsc(${i});return false" aria-label="Remove">✕</a></span>`).join('')
+      || '<span class="oc-dchip">In-app only</span>';
+  const job = DOD.job && !DOD.agentId ? _jobFieldsHtml() : '';
   b.innerHTML = `
+    ${job}
     ${d.status ? `<p class="dod-lead">Version ${d.version} · ${d.status==='published'?'live — every run is verified against it':'draft — not live yet'}.
       <a href="#" onclick="dodDescribe();return false">Re-draft from a description</a></p>` : ''}
     ${DOD.notes ? `<div class="dod-note"><b>Planner notes:</b> ${esc(DOD.notes)}</div>` : ''}
@@ -2304,15 +2330,29 @@ function _dodRender(view){
           <option value="email">Email</option><option value="webhook">Webhook</option><option value="data">Data (written by the agent)</option></select>
         <input id="dodDestVal" type="text" class="modal-input" style="flex:1;min-width:160px" placeholder="#channel, address, URL or label">
         <button class="ghost sm" onclick="dodAddDest()">Add</button></div></div>
+    <div class="dod-sec"><span class="fld-label">If it needs you — besides the in-app inbox, tell</span>
+      <div class="oc-dl">${escChips}</div>
+      <div class="oc-cta" style="margin-top:8px">
+        <select id="dodEscKind" class="modal-input" style="width:auto">
+          ${ESC_CH.owner_email ? '<option value="owner">Email to me</option>' : ''}<option value="slack">Slack channel</option>
+          <option value="email">Email (via your mailbox)</option><option value="webhook">Webhook (e.g. Slack incoming webhook)</option></select>
+        <input id="dodEscVal" type="text" class="modal-input" style="flex:1;min-width:160px" placeholder="#channel, address or URL">
+        <button class="ghost sm" onclick="dodAddEsc()">Add</button>
+        ${esc_ == null ? '' : '<a href="#" class="dod-sum" onclick="dodResetEsc();return false">use the default</a>'}</div></div>
     <div class="dod-sec"><span class="fld-label">Budget</span>
       <div class="dod-grid">
         <label>Attempts <input id="dodAtt" type="number" min="1" max="5" class="modal-input" style="width:80px" value="${bud.max_attempts||3}"></label>
         <label>Max spend $ <input id="dodCost" type="number" min="0" step="0.5" class="modal-input" style="width:100px" value="${bud.max_cost_usd ?? ''}" placeholder="none"></label>
       </div></div>
     <div class="modal-actions" style="margin-top:var(--sp-4);flex-wrap:wrap">
+      ${DOD.job && !DOD.agentId ? `
+      <button class="ghost" onclick="jobCreate('draft')">Save as draft</button>
+      <button class="ghost" onclick="jobCreate('dry_run')" title="Run it once for real, verify it, deliver nothing — then decide">Dry run first</button>
+      <button onclick="jobCreate('live')">Create &amp; go live</button>` : `
       <button class="ghost" onclick="dodTest()">Test checks now</button>
       <button class="ghost" onclick="dodDryRun()">Dry run</button>
       <button onclick="dodPublish()">Publish</button>
+      ${DOD.enabled === false ? '<button onclick="goLive(DOD.agentId)" title="Publish and switch the routine on">Go live</button>' : ''}`}
     </div>
     <div id="dodOut" class="dod-out"></div>`;
 }
@@ -2327,15 +2367,128 @@ function _dodSync(){
     try { c.config = JSON.parse(el.querySelector('.dod-ccfg').value); }
     catch(e){ toast(`"${c.name}": configuration isn't valid JSON`, 'err'); return false; }
   }
+  if (DOD.job && !DOD.agentId && $('#jobName')){
+    const j = DOD.job;
+    j.name = $('#jobName').value.trim(); j.prompt = $('#jobPrompt').value.trim();
+    const w = $('#jobWhen').value;
+    if (w === 'once'){ j.schedule_kind = 'once'; j.schedule_expr = null; }
+    else { j.schedule_kind = 'cron'; j.schedule_expr = w === '__cron' ? $('#jobCron').value.trim() : w; }
+    j.connectors = [...document.querySelectorAll('.job-conn:checked')].map(x => x.value);
+    j.db_connection_ids = [...document.querySelectorAll('.job-db:checked')].map(x => +x.value);
+  }
   const att = parseInt($('#dodAtt').value, 10), cost = parseFloat($('#dodCost').value);
   d.budget = {max_attempts: Math.max(1, Math.min(5, att || 3)), ...(cost > 0 ? {max_cost_usd: cost} : {})};
   return true;
 }
 function _dodBody(publish){
   const d = DOD.draft;
-  return {objective:d.objective, checks:d.checks, deliver_to:d.deliver_to, budget:d.budget, publish:!!publish};
+  return {objective:d.objective, checks:d.checks, deliver_to:d.deliver_to, budget:d.budget,
+          escalate_to: d.escalate_to == null ? null : d.escalate_to, publish:!!publish};
 }
 window.dodDescribe = () => { _dodSync(); _dodRender('describe'); };
+let ESC_CH = {owner_email:false, connected:[]};
+async function _escChannels(){ try { ESC_CH = await api('/api/escalation-channels'); } catch(e){} }
+window.dodAddEsc = () => {
+  if (!_dodSync()) return;
+  const k = $('#dodEscKind').value, v = $('#dodEscVal').value.trim();
+  if (k !== 'owner' && !v){ toast('Fill in where to tell you', 'err'); return; }
+  const d = k==='owner' ? {kind:'owner'} : k==='slack' ? {kind:'slack', channel:v} : k==='email' ? {kind:'email', to:v}
+          : {kind:'webhook', url:v, format: /hooks\.slack\.com/.test(v) ? 'slack' : 'json'};
+  const list = DOD.draft.escalate_to == null ? (ESC_CH.owner_email ? [{kind:'owner'}] : []) : DOD.draft.escalate_to;
+  if (!list.some(x => JSON.stringify(x) === JSON.stringify(d))) list.push(d);
+  DOD.draft.escalate_to = list; _dodRender();
+};
+window.dodRemoveEsc = (i) => { if (!_dodSync()) return; DOD.draft.escalate_to.splice(i,1); _dodRender(); };
+window.dodResetEsc = () => { if (!_dodSync()) return; DOD.draft.escalate_to = null; _dodRender(); };
+
+// ---- delegate a job: describe it → the planner drafts the whole routine + its definition of done ----
+const _JOB_WHEN = [['once','Once, now'],['0 9 * * *','Every day at 9:00'],['0 8 * * 1-5','Weekdays at 8:00'],
+  ['0 9 * * 1','Every Monday at 9:00'],['0 * * * *','Every hour'],['0 9 1 * *','Monthly · 1st at 9:00'],['__cron','Custom…']];
+function _jobFieldsHtml(){
+  const j = DOD.job, cx = DOD.jobCtx || {};
+  const preset = j.schedule_kind === 'once' ? 'once' : (_JOB_WHEN.some(w => w[0] === j.schedule_expr) ? j.schedule_expr : '__cron');
+  const conns = [...new Set([...(cx.connectors||[]), ...(j.connectors||[])])];
+  return `<div class="dod-sec" style="margin-top:0"><label class="fld-label" for="jobName">Job</label>
+      <input id="jobName" class="modal-input" value="${esc(j.name||'')}" maxlength="60"></div>
+    <div class="dod-sec"><label class="fld-label" for="jobPrompt">Instructions — what the agent does every run</label>
+      <textarea id="jobPrompt" class="modal-input" rows="7">${esc(j.prompt||'')}</textarea></div>
+    <div class="dod-sec"><span class="fld-label">When</span>
+      <div class="oc-cta"><select id="jobWhen" class="modal-input" style="width:auto" onchange="$('#jobCronWrap').style.display=this.value==='__cron'?'':'none'">
+        ${_JOB_WHEN.map(w => `<option value="${w[0]}" ${w[0]===preset?'selected':''}>${w[1]}</option>`).join('')}</select>
+        <span id="jobCronWrap" style="${preset==='__cron'?'':'display:none'}"><input id="jobCron" class="modal-input" style="width:140px" value="${esc(j.schedule_expr||'0 9 * * *')}" placeholder="min hr dom mon dow"></span>
+        <span class="dod-sum">${esc(j.schedule_human||'')}${cx.timezone ? ' · times are '+esc(cx.timezone) : ''}</span></div></div>
+    <div class="dod-sec"><span class="fld-label">Uses</span>
+      <div class="dod-grid">
+        ${conns.map(c => `<label><input type="checkbox" class="job-conn" value="${esc(c)}" ${(j.connectors||[]).includes(c)?'checked':''}> ${esc(c)}</label>`).join('')}
+        ${(cx.dbs||[]).map(x => `<label><input type="checkbox" class="job-db" value="${x.id}" ${(j.db_connection_ids||[]).includes(x.id)?'checked':''}> ${esc(x.name)} <span class="dod-sum">data source</span></label>`).join('')}
+        ${!conns.length && !(cx.dbs||[]).length ? '<span class="dod-sum">No connected apps or data sources — the agent uses the web and its workspace.</span>' : ''}
+      </div></div>
+    <div class="dod-sec" style="border-top:1px solid var(--line);padding-top:var(--sp-3)"><span class="fld-label">Definition of done</span></div>`;
+}
+window.openDelegate = async (seed, fromChatId) => {
+  clearTimeout(DOD && DOD.pollT);
+  DOD = {agentId:null, job:null, draft:null, notes:'', warnings:[], seed:seed||'', fromChat:fromChatId||null};
+  await _escChannels();
+  $('#dodFor').textContent = fromChatId ? 'Save this chat as a job' : 'Delegate a job';
+  _dodRender('describe');
+  $('#dodModal').style.display = 'flex';
+  if (seed && seed.trim().length >= 5) jobPlan();
+  else setTimeout(() => { const t = $('#dodDesc'); if (t) t.focus(); }, 50);
+};
+window.jobPlan = async () => {
+  const desc = (($('#dodDesc')||{}).value||'').trim();
+  if (!DOD.fromChat && desc.length < 5){ toast('Describe the job first', 'err'); return; }
+  DOD.seed = desc;
+  const btn = $('#dodDraftBtn'); if (btn){ btn.disabled = true; btn.textContent = 'Planning…'; }
+  $('#dodOut').innerHTML = `<div class="dod-note">Reading your connected apps, data sources${DOD.fromChat?', and this conversation':''}… this takes up to a minute.</div>`;
+  try {
+    const [r, dbs] = await Promise.all([
+      api('/api/jobs/plan', {method:'POST', body:JSON.stringify({description:desc, from_chat_id:DOD.fromChat})}),
+      api('/api/db-connections').catch(() => [])]);
+    DOD.job = r.job; DOD.draft = r.draft; DOD.warnings = r.warnings || [];
+    DOD.jobCtx = {connectors:(r.context||{}).connectors||[], timezone:(r.context||{}).timezone,
+                  dbs:(dbs||[]).map(x => ({id:x.id, name:x.name}))};
+    DOD.notes = r.notes || '';
+    $('#dodFor').textContent = r.job.name;
+    _dodRender();
+  } catch(e){
+    if (btn){ btn.disabled = false; btn.textContent = 'Plan it'; }
+    $('#dodOut').innerHTML = `<div class="dod-warn">${esc(e.detail||e.message||'error')}</div>`;
+  }
+};
+window.jobCreate = async (mode) => {
+  if (!_dodSync()) return;
+  const j = DOD.job, d = DOD.draft;
+  if (!j.name || !j.prompt){ toast('The job needs a name and instructions', 'err'); return; }
+  if (!d.objective){ toast('Write the objective', 'err'); return; }
+  if (!d.checks.length){ toast('Add at least one check — it is how the job proves it was done', 'err'); return; }
+  const body = {name:j.name, prompt:j.prompt, schedule_kind:j.schedule_kind, schedule_expr:j.schedule_expr,
+                connectors:j.connectors||[], db_connection_ids:j.db_connection_ids||[],
+                spec:_dodBody(false), mode, from_chat_id:DOD.fromChat};
+  $('#dodOut').innerHTML = '<div class="dod-note">Creating the job…</div>';
+  try {
+    const r = await api('/api/jobs', {method:'POST', body:JSON.stringify(body)});
+    DOD.agentId = r.agent_id; DOD.enabled = mode === 'live'; DOD.name = j.name;
+    loadTasks();
+    if (mode === 'dry_run'){
+      DOD.dryOutcome = r.outcome_id;
+      _dodRender();
+      $('#dodOut').innerHTML = `<div class="dod-note" id="dodDry">Created, paused. Dry run started (run #${r.run_id}) — it runs for real and is verified, but nothing is delivered. You can close this; it'll be waiting on the routine.</div>`;
+      _dodPoll(r.outcome_id);
+    } else {
+      toast(mode === 'live' ? (j.schedule_kind === 'once' ? 'Job created — running now' : 'Job created and scheduled') : 'Saved as a draft (paused)', 'ok');
+      closeDod(); gotoRoutine(r.agent_id);
+    }
+  } catch(e){ $('#dodOut').innerHTML = `<div class="dod-warn">${esc(e.detail||e.message||'error')}</div>`; }
+};
+window.goLive = async (agentId) => {
+  try {
+    const r = await api(`/api/agents/${agentId}/go-live`, {method:'POST'});
+    toast(r.run_id ? 'Live — running now' : `Live${r.next_run_at ? ' — next run '+_ocTime(r.next_run_at) : ''}`, 'ok');
+    if ($('#dodModal').style.display === 'flex') closeDod();
+    gotoRoutine(agentId); loadTasks();
+  } catch(e){ toast(e.detail||e.message||'error','err'); }
+};
 window.dodBackToForm = () => _dodRender();
 window.dodBlank = () => { DOD.draft = {objective:'', checks:[], deliver_to:[{kind:'notify'}], budget:{max_attempts:3}}; _dodRender(); };
 window.dodAddCheck = (k) => { if (!_dodSync()) return; DOD.draft.checks.push(JSON.parse(JSON.stringify(_DOD_TPL[k]))); _dodRender(); };
@@ -2405,7 +2558,10 @@ async function _dodPoll(oid){
   const r = o.receipt || {};
   _dodResults(r.checks || []);
   box.innerHTML = `<b>${o.status==='delivered' ? '✓ Dry run verified' : '✗ Dry run not verified'}</b> — ${esc(r.summary||r.headline||'')}
-    ${r.delivery_preview ? `<div class="fld-label" style="margin-top:8px">This is what would have been delivered</div><div class="dod-preview">${esc(r.delivery_preview)}</div>` : ''}`;
+    ${r.delivery_preview ? `<div class="fld-label" style="margin-top:8px">This is what would have been delivered</div><div class="dod-preview">${esc(r.delivery_preview)}</div>` : ''}
+    ${DOD.enabled === false ? `<div class="oc-cta" style="margin-top:10px">
+      <button onclick="goLive(${DOD.agentId})">${o.status==='delivered' ? 'Go live' : 'Go live anyway'}</button>
+      <button class="ghost" onclick="closeDod();gotoRoutine(${DOD.agentId})">Open the routine</button></div>` : ''}`;
   if (CURRENT_TASK_ID === DOD.agentId) openTask(DOD.agentId);
 }
 window.dodPublish = async () => {

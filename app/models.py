@@ -160,6 +160,7 @@ class JobSpecIn(BaseModel):
     deliver_to: Optional[list] = None
     constraints: Optional[list] = None
     budget: Optional[dict] = None
+    escalate_to: Optional[list] = None      # None = default (owner email); [] = in-app only
     publish: bool = False
 
 
@@ -189,3 +190,22 @@ class ReviewIn(BaseModel):
     """A person's verdict on an outcome awaiting approval or picked for a spot-check."""
     decision: Literal["approve", "changes", "reject"]
     note: str = Field("", max_length=2000)
+
+
+class JobPlanIn(BaseModel):
+    """Delegate a job: plain-language description, or a chat that already did it."""
+    description: str = Field("", max_length=4000)
+    from_chat_id: Optional[int] = None
+
+
+class JobCreateIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    prompt: str = Field(..., min_length=1, max_length=20000)
+    schedule_kind: Literal["once", "cron", "interval"] = "once"
+    schedule_expr: Optional[str] = None
+    connectors: list[str] = Field(default_factory=list)
+    db_connection_ids: list[int] = Field(default_factory=list)
+    spec: JobSpecIn
+    mode: Literal["live", "dry_run", "draft"] = "dry_run"
+    from_chat_id: Optional[int] = None     # copy that chat's workspace files
+    baseline_minutes: Optional[int] = Field(None, ge=0, le=100000)

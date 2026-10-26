@@ -11,6 +11,8 @@ Destinations (spec.deliver_to items):
   {"kind": "slack", "channel": "#pricing"}            via the owner's Slack connector
   {"kind": "email", "to": "a@b.co", "via": "gmail"}   via the owner's Gmail/Outlook
   {"kind": "webhook", "url": "https://…", "format": "json"|"slack"}
+  {"kind": "owner"}                                   email to the routine's owner via the
+                                                      platform's SMTP (SMTP_* settings)
   {"kind": "data", "label": "…"}                      informational: the agent writes it
                                                       itself and checks verify it
 """
@@ -28,7 +30,7 @@ from . import db
 
 log = logging.getLogger("antonagents.deliver")
 
-MESSAGE_KINDS = {"notify", "slack", "email", "webhook"}
+MESSAGE_KINDS = {"notify", "slack", "email", "webhook", "owner"}
 MAX_ATTEMPTS = 3
 _RETRY_S = [60, 300]                      # after 1st and 2nd failure
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -36,7 +38,10 @@ _MSG_CAP = 30000
 
 
 class DeliveryError(Exception):
-    pass
+    """`permanent`: retrying can't help until someone changes the setup."""
+    def __init__(self, msg: str, permanent: bool = False):
+        super().__init__(msg)
+        self.permanent = permanent
 
 
 def _now() -> str:
@@ -88,6 +93,8 @@ def normalize_deliver_to(items: Optional[list]) -> list:
             out.append({"kind": "data", "label": str(d.get("label") or "")[:200]})
         elif kind == "notify":
             out.append({"kind": "notify"})
+        elif kind == "owner":
+            out.append({"kind": "owner"})
         elif kind == "slack":
             ch = str(d.get("channel") or "").strip()
             if not ch:
@@ -124,6 +131,7 @@ def describe(d: dict) -> str:
     k = d.get("kind")
     return {"notify": "in-app notification",
             "slack": f"Slack {d.get('channel')}",
+            "owner": "email to the owner",
             "email": f"email to {d.get('to')}",
             "webhook": f"webhook {urlparse(d.get('url', '')).hostname or ''}",
             "data": d.get("label") or "data"}.get(k, k or "?")
@@ -174,6 +182,42 @@ def _composio():
     return client
 
 
+def smtp_available() -> bool:
+    from . import config
+    return bool(config.SMTP_HOST and config.SMTP_FROM)
+
+
+def _smtp_send(to: str, subject: str, body: str) -> None:
+    import smtplib
+    from email.message import EmailMessage
+    from . import config
+    m = EmailMessage()
+    m["From"], m["To"], m["Subject"] = config.SMTP_FROM, to, subject[:200]
+    m.set_content(body)
+    if config.SMTP_TLS == "ssl":
+        s = smtplib.SMTP_SSL(config.SMTP_HOST, config.SMTP_PORT, timeout=20)
+    else:
+        s = smtplib.SMTP(config.SMTP_HOST, config.SMTP_PORT, timeout=20)
+        if config.SMTP_TLS == "starttls":
+            s.starttls()
+    try:
+        if config.SMTP_USER:
+            s.login(config.SMTP_USER, config.SMTP_PASSWORD)
+        s.send_message(m)
+    finally:
+        s.quit()
+
+
+async def send_owner_email(owner_id: Optional[int], subject: str, body: str) -> str:
+    if not smtp_available():
+        raise DeliveryError("platform email isn't configured (set SMTP_HOST / SMTP_FROM)", permanent=True)
+    user = await db.get_user(owner_id) if owner_id else None
+    if not user or not user.get("email"):
+        raise DeliveryError("the routine's owner has no email address", permanent=True)
+    await asyncio.to_thread(_smtp_send, user["email"], subject, body)
+    return f"emailed {user['email']}"
+
+
 async def _execute(owner_id: int, provider: str, slug: str, args: dict) -> str:
     conn = await db.get_connection(owner_id, provider)
     if not conn or conn.get("status") != "active":
@@ -196,6 +240,8 @@ async def _send(d: dict, o: dict, agent: dict, msg: dict) -> str:
     if kind == "notify":
         await db.add_notification(o["org_id"], o["agent_id"], None, msg["title"], msg["plain"][:2000])
         return "notification created"
+    if kind == "owner":
+        return await send_owner_email(owner, msg["title"], msg["plain"])
     if kind == "slack":
         return await _execute(owner, "slack", "SLACK_SEND_MESSAGE",
                               {"channel": d["channel"], "markdown_text": msg["text"]})
@@ -261,6 +307,8 @@ async def deliver_outcome(outcome_id: int, force: bool = False) -> list[dict]:
             nxt = _iso_in(_RETRY_S[min(tried - 1, len(_RETRY_S) - 1)]) if tried < MAX_ATTEMPTS else None
             await db.mark_delivery(row["id"], status="failed", error=err[:300], next_try_at=nxt)
             if tried >= MAX_ATTEMPTS:
+                from . import escalate   # lazy: escalate sends through this module
+                escalate.fire(outcome_id, "delivery_failed", f"{describe(d)} — {err[:300]}")
                 try:
                     await db.add_notification(o["org_id"], o["agent_id"], None,
                                               f"Couldn't deliver: {agent.get('name')}",

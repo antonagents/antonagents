@@ -16,7 +16,7 @@ import random
 import re
 from typing import Optional
 
-from . import config, db, deliver, verify
+from . import config, db, deliver, escalate, verify
 
 log = logging.getLogger("antonagents.outcomes")
 
@@ -234,6 +234,7 @@ async def verify_outcome(outcome_id: int, attempt: Optional[int] = None,
             needs_you_reason=None, receipt_json=json.dumps(receipt), cost_usd=cost,
             manifest_json=json.dumps(manifest) if manifest else None)
         if prev_status != "awaiting_approval":
+            escalate.fire(outcome_id, "approval", receipt["summary"])
             agent = await db.get_agent(o["agent_id"])
             try:
                 await db.add_notification(o["org_id"], o["agent_id"], run and run.get("id"),
@@ -297,6 +298,8 @@ async def verify_outcome(outcome_id: int, attempt: Optional[int] = None,
         manifest_json=json.dumps(manifest) if manifest else None)
 
     if decision["status"] in ("failed", "needs_you"):
+        escalate.fire(outcome_id, "needs_you" if decision["status"] == "needs_you" else "failed",
+                      decision.get("needs_you_reason") or receipt["summary"])
         agent = await db.get_agent(o["agent_id"])
         name = (agent or {}).get("name", "routine")
         title = (f"Needs you: {name}" if decision["status"] == "needs_you"
@@ -524,6 +527,10 @@ async def recovery_loop() -> None:
                     log.exception("could not launch recovery for outcome %s", o["id"])
         except Exception:  # noqa: BLE001
             log.exception("recovery loop tick failed")
+        try:
+            await escalate.retry_due()                 # escalations that failed to send
+        except Exception:  # noqa: BLE001
+            log.exception("escalation retry tick failed")
         try:
             await deliver.retry_due()                  # failed deliveries due a retry
         except Exception:  # noqa: BLE001
