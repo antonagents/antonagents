@@ -1,6 +1,6 @@
 # Feature: Outcome Jobs (delegate the job, get the outcome)
 
-> Status: **steps 1–4 implemented** (2026-10-26).
+> Status: **steps 1–5 implemented** (2026-10-26).
 > Step 1 — job specs, outcomes, independent `sql` + `artifact` verification,
 > receipts, console outcome card; live on agent 60 (first live verified outcome:
 > #3, 2026-10-25). Step 2 — recovery loop: failure classifier (blocked, auth,
@@ -28,7 +28,19 @@
 > retried, shows the would-be message), **Publish**. Needs-you inbox on Routines +
 > header pill: Retry, Retry with an answer (fed to the next attempt), Dismiss;
 > reconnect link for auth failures.
-> Steps 5–6 not started.
+> Step 5 — outcome ledger (`GET /api/ledger`, console **Outcomes** view; replaces
+> the run-count impact strip): verified outcomes, % without a human (no person
+> answered/retried/dismissed), first-try vs recovered, cost and tokens per verified
+> outcome, time saved (per-routine minutes, editable inline), escalations (open,
+> oldest, median wait), recurring blockers, outcomes per day, and routines still
+> running without a definition of done. "Not right?" marks a delivered outcome
+> wrong → false-delivered rate; it then no longer counts as verified or as time
+> saved. Metering: every run now records provider, model and token usage; cost =
+> usage × `pricing` in providers.json (USD per million tokens, per model or `"*"`)
+> when configured, else the SDK's Anthropic-list-price figure labelled
+> **estimate** (Anthropic routes count as metered). No prices are configured yet,
+> so GLM cost shows as an estimate.
+> Step 6 not started.
 > Positioning decision behind it: see `positioning` memory — "outcome-based, not
 > ask-and-it-does".
 

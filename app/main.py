@@ -44,11 +44,11 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import (auth, config, connectors, db, db_access, deliver, outcomes, planner, providers, ratelimit, runner,
+from . import (auth, config, connectors, db, db_access, deliver, ledger, outcomes, planner, providers, ratelimit, runner,
                scheduler, templates, verify)
 from .auth import current_user
 from .connectors import db_driver
-from .models import (AgentAlertsIn, AgentConnectorsIn, AgentCreate, AgentModelIn, AgentNameIn,
+from .models import (BaselineIn, FlagIn, AgentAlertsIn, AgentConnectorsIn, AgentCreate, AgentModelIn, AgentNameIn,
                      AgentDbConnectionsIn, AgentScheduleIn, AgentSkillsIn, ApiKeyIn,
                      DbConnectionIn, DbConnectionTestIn, DbConnectionUpdateIn,
                      InvitationIn, JobSpecIn, LoginIn, MemberRoleIn, ResolveIn,
@@ -1231,6 +1231,38 @@ async def dry_run_job_spec(agent_id: int, body: JobSpecIn, user: dict = Depends(
     await db.link_run_to_outcome(run_id, oid)
     await runner.start_run(run_id, agent)
     return {"outcome_id": oid, "run_id": run_id, "spec_id": spec_id}
+
+
+@app.get("/api/ledger")
+async def outcome_ledger(days: int = 30, user: dict = Depends(current_user)):
+    """The outcome ledger: verified outcomes, unattended rate, cost per verified
+    outcome, escalations and recurring blockers over the last `days` days."""
+    return await ledger.build(_org_id(user), max(1, min(90, days)))
+
+
+@app.post("/api/outcomes/{outcome_id}/flag")
+async def flag_outcome(outcome_id: int, body: FlagIn, user: dict = Depends(current_user)):
+    """Mark a delivered outcome as wrong (it passed its checks but wasn't right)."""
+    o = await _owned_outcome_or_404(outcome_id, user)
+    if o["status"] != "delivered":
+        raise HTTPException(409, "only a delivered outcome can be marked wrong")
+    await db.flag_outcome(outcome_id, body.note.strip())
+    return await db.get_outcome(outcome_id)
+
+
+@app.delete("/api/outcomes/{outcome_id}/flag")
+async def unflag_outcome(outcome_id: int, user: dict = Depends(current_user)):
+    await _owned_outcome_or_404(outcome_id, user)
+    await db.flag_outcome(outcome_id, None)
+    return await db.get_outcome(outcome_id)
+
+
+@app.put("/api/agents/{agent_id}/baseline")
+async def set_agent_baseline(agent_id: int, body: BaselineIn, user: dict = Depends(current_user)):
+    """Minutes of a person's work one delivered outcome replaces (for time saved)."""
+    await _owned_agent_or_404(agent_id, user)
+    await db.set_baseline(agent_id, body.minutes)
+    return {"baseline_minutes": body.minutes}
 
 
 @app.get("/api/needs-you")

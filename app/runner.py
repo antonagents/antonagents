@@ -13,7 +13,7 @@ import shlex
 from typing import Optional
 from urllib.parse import unquote, urlparse
 
-from . import alerts, config, connectors, db, outcomes, providers, router
+from . import alerts, config, connectors, db, metering, outcomes, providers, router
 
 # bounded concurrency across all runs
 _sem: Optional[asyncio.Semaphore] = None
@@ -323,6 +323,8 @@ async def execute_run(run_id: int, agent: dict) -> None:
     seq = 0
     result_text: Optional[str] = None
     cost_usd: Optional[float] = None
+    usage: Optional[dict] = None
+    route: dict = {}
     error: Optional[str] = None
     exit_code: Optional[int] = None
 
@@ -343,13 +345,14 @@ async def execute_run(run_id: int, agent: dict) -> None:
         outcomes.log.exception("could not start an outcome for run %s", run_id)
 
     async def handle(event: dict) -> None:
-        nonlocal seq, result_text, cost_usd, error
+        nonlocal seq, result_text, cost_usd, usage, error
         seq += 1
         etype = event.get("type", "event")
         await db.add_event(run_id, seq, etype, event)
         _publish(run_id, {"seq": seq, **event})
         if etype == "result":
             cost_usd = event.get("cost_usd")
+            usage = event.get("usage") if isinstance(event.get("usage"), dict) else None
             # An error result (e.g. "Prompt is too long") carries the REAL reason in
             # `result`; capture it as the run error so the user sees that instead of
             # the SDK's cryptic "returned an error result: success" exception that
@@ -386,6 +389,8 @@ async def execute_run(run_id: int, agent: dict) -> None:
             return
 
         await handle({"type": "routed", "provider": provider_name, "model": model})
+        route.update(provider=provider_name, model=model)
+        await db.set_run_route(run_id, provider_name, model)
 
         # provision ONLY the connectors this agent selected, intersected with the
         # owner's currently-active connections. Best-effort: a connector hiccup
@@ -567,9 +572,11 @@ async def execute_run(run_id: int, agent: dict) -> None:
                     error = f"{error} (likely out of memory — exceeded {run_memory or config.TASK_MEMORY})"
 
         status = "succeeded" if (exit_code == 0 and not error) else "failed"
+        cost_usd, basis = metering.cost(route.get("provider"), route.get("model"), usage, cost_usd)
         await db.finish_run(
             run_id, status=status, exit_code=exit_code,
             cost_usd=cost_usd, result=result_text, error=error,
+            usage=usage, cost_basis=basis,
         )
         _publish(run_id, {"type": "status", "status": status,
                           "exit_code": exit_code, "cost_usd": cost_usd})

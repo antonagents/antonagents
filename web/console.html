@@ -569,6 +569,28 @@
   .dod-preview{ white-space:pre-wrap; font-size:var(--fs-xs); background:var(--surface-2); border:1px solid var(--line);
     border-radius:var(--r-sm); padding:8px 10px; margin-top:6px; }
   .ny-panel{ border-left:3px solid var(--err); }
+  /* outcome ledger (step 5) */
+  .navcount.err{ background:var(--err); color:#fff; }
+  .lg-est{ font-size:10px; font-weight:500; color:var(--muted); margin-left:4px; letter-spacing:.04em;
+    text-transform:uppercase; cursor:help; vertical-align:middle; }
+  .lg-bars{ display:flex; align-items:flex-end; gap:3px; height:64px; padding:6px 0; border-bottom:1px solid var(--line); }
+  .lg-bars span{ flex:1; height:100%; display:flex; flex-direction:column-reverse; min-width:3px; }
+  .lg-bars i, .lg-axis i{ display:block; border-radius:2px; }
+  .lg-bars i + i{ margin-bottom:1px; }
+  .lg-bars i.d, .lg-axis i.d{ background:var(--ok); } .lg-bars i.f, .lg-axis i.f{ background:var(--err); }
+  .lg-bars i.n, .lg-axis i.n{ background:var(--warn); } .lg-bars i.o{ background:var(--line-strong); }
+  .lg-axis{ display:flex; justify-content:space-between; gap:8px; font-size:var(--fs-xs); color:var(--muted); margin-top:6px; flex-wrap:wrap; }
+  .lg-axis i{ display:inline-block; width:8px; height:8px; margin:0 3px 0 8px; }
+  .lg-wrap{ overflow-x:auto; }
+  .lg-table{ width:100%; border-collapse:collapse; font-size:var(--fs-xs); font-variant-numeric:tabular-nums; }
+  .lg-table th{ text-align:right; color:var(--muted); font-weight:500; text-transform:uppercase; letter-spacing:.04em;
+    padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  .lg-table td{ text-align:right; padding:8px; border-bottom:1px solid var(--line); color:var(--fg-2); white-space:nowrap; }
+  .lg-table th:first-child, .lg-table td:first-child{ text-align:left; white-space:normal; }
+  .lg-table td:first-child a{ color:var(--fg); font-weight:500; }
+  .lg-min{ width:64px; padding:3px 6px; text-align:right; font:inherit; background:var(--surface); color:var(--fg);
+    border:1px solid var(--line); border-radius:var(--r-sm); }
+  .oc-flag summary{ font-size:var(--fs-xs); color:var(--muted); cursor:pointer; }
   .ny-item{ display:flex; flex-direction:column; gap:6px; padding:10px 0; }
   .ny-item + .ny-item{ border-top:1px solid var(--line); }
   .ny-name{ font-weight:600; font-size:var(--fs-base); }
@@ -1105,6 +1127,7 @@
   <nav id="sidebar">
     <button class="navitem" data-view="chat" onclick="gotoChat()" title="Chat"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span><span class="nl">Chat</span></button>
     <button class="navitem" data-view="routines" onclick="showView('routines')" title="Routines"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><span class="nl">Routines</span><span class="navcount live" id="navRoutines" style="display:none"></span></button>
+    <button class="navitem" data-view="outcomes" onclick="showView('outcomes')" title="Outcomes"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/></svg></span><span class="nl">Outcomes</span><span class="navcount err" id="navNeedsYou" style="display:none" title="Need you"></span></button>
     <button class="navitem" data-view="connectors" onclick="showView('connectors')" title="Connectors"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg></span><span class="nl">Connectors</span><span class="navcount" id="navConn"></span></button>
     <button class="navitem" data-view="data" onclick="showView('data')" title="Data sources"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14a8 3 0 0 0 16 0V5"/><path d="M4 12a8 3 0 0 0 16 0"/></svg></span><span class="nl">Data sources</span></button>
     <button class="navitem" data-view="alerts" onclick="showView('alerts')" title="Alerts"><span class="ni"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span><span class="nl">Alerts</span><span class="navcount" id="navAlerts"></span></button>
@@ -1168,7 +1191,7 @@
             <div id="needsYouList"></div>
           </div>
           <div class="panel" id="impactPanel" style="display:none">
-            <p class="eyebrow">Impact</p>
+            <p class="eyebrow">Outcomes · 30 days</p>
             <div id="impact" class="impact-strip"></div>
           </div>
           <div class="panel" id="templatePanel" style="display:none">
@@ -1267,6 +1290,22 @@
     </section>
 
     <!-- ===== CONNECTORS ===== -->
+    <section id="view-outcomes" class="view">
+      <div class="page">
+        <div class="page-head"><h2>Outcomes</h2><span class="count" id="lgRange"></span></div>
+        <p class="page-sub">Jobs delegated to your routines: how many were verified done, how many needed nobody, and what each one cost.</p>
+        <div class="seg" id="lgDays">
+          <button data-d="7" onclick="setLedgerDays(7)">7 days</button>
+          <button data-d="30" class="on" onclick="setLedgerDays(30)">30 days</button>
+          <button data-d="90" onclick="setLedgerDays(90)">90 days</button>
+        </div>
+        <div class="obs-cards" id="lgCards"></div>
+        <div id="lgDaily" style="margin-top:22px"></div>
+        <div id="lgBlockers" style="margin-top:22px"></div>
+        <div id="lgRoutines" style="margin-top:22px"></div>
+        <div id="lgUnverified" style="margin-top:22px"></div>
+      </div>
+    </section>
     <section id="view-connectors" class="view">
       <div class="page">
         <div class="page-head"><h2>Connectors</h2><span class="count" id="connCount"></span></div>
@@ -1602,6 +1641,7 @@ function showView(name, opts){
   }
   if (name==='chat'){ CONV.log='#log'; loadChats(); }
   else if (name==='routines'){ CONV.log='#rlog'; loadTasks(); loadImpact(); loadTemplates(); }
+  else if (name==='outcomes'){ loadLedger(); }
   else if (name==='connectors'){ loadConnectors(); }
   else if (name==='data'){ loadDbEngines(); loadDbs(); }
   else if (name==='alerts'){ openAlertsView(); }
@@ -1721,7 +1761,7 @@ function routeFromPath(){
   const p = location.pathname.replace(/\/+$/,'');
   let m = p.match(/^\/app\/chat\/(\d+)$/);
   if (m) return {view:'chat', chat:Number(m[1])};
-  m = p.match(/^\/app\/(routines|connectors|data|alerts|members|observability)$/);
+  m = p.match(/^\/app\/(routines|outcomes|connectors|data|alerts|members|observability)$/);
   if (m) return {view:m[1]};
   return {view:'chat'};                       // /app (or anything else) → chat welcome
 }
@@ -2106,6 +2146,11 @@ function outcomeCard(t){
     ${(o.deliveries||[]).length ? `<div class="oc-dl"><span class="oc-k">Delivered to</span>
       ${o.deliveries.map(d => `<span class="oc-dchip ${d.status==='sent'?'ok':d.status==='failed'?'bad':''}" title="${esc(d.last_error||'')}">${d.status==='sent'?'✓':d.status==='failed'?'✗':'…'} ${esc(d.target||d.kind)}</span>`).join('')}
       ${o.deliveries.some(d=>d.status==='failed') ? `<a href="#" onclick="redeliverOutcome(${o.id});return false">retry delivery</a>` : ''}</div>` : ''}
+    ${o.status==='delivered' && o.flagged_at ? `<div class="oc-needs"><b>Marked wrong</b>${o.flag_note?': '+esc(o.flag_note):''}
+        · <a href="#" onclick="flagOutcome(${o.id}, true);return false">undo</a></div>` : ''}
+    ${o.status==='delivered' && !o.flagged_at && o.trigger!=='dry_run' ? `<details class="oc-flag"><summary>Not right?</summary>
+        <div class="ny-actions" style="margin-top:6px"><input type="text" class="modal-input" id="flagNote${o.id}" maxlength="1000" placeholder="What was wrong (optional)">
+        <button class="ghost sm" onclick="flagOutcome(${o.id})">Mark wrong</button></div></details>` : ''}
     <div class="oc-foot"><span>${esc(meta)}</span>${outs.length>1?`<span class="oc-hist">recent ${hist}</span>`:''}</div>
     ${obj}
   </div>`;
@@ -2349,6 +2394,106 @@ window.resolveOutcome = async (oid, action) => {
     toast(action === 'dismiss' ? 'Dismissed' : 'Retrying now', 'ok');
   } catch(e){ toast(e.detail||e.message||'error','err'); }
   await loadLive();
+  if (CURRENT_TASK_ID) openTask(CURRENT_TASK_ID);
+};
+
+// ---- outcome ledger: what got done, verified, without anyone ----
+let LEDGER_DAYS = 30;
+const _pct = v => v == null ? '—' : Math.round(v*100)+'%';
+const _hrs = m => m >= 60 ? (m/60).toFixed(m >= 600 ? 0 : 1)+'h' : m+'m';
+const _tok = n => n == null ? '—' : n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? Math.round(n/1e3)+'k' : String(n);
+function _costLine(t){
+  if (t.cost_per_verified_usd == null) return '—';
+  return _usd(t.cost_per_verified_usd) + (t.cost_basis === 'estimate' ? '<span class="lg-est" title="The model provider has no price table configured, so this is the Agent SDK’s estimate at Anthropic list prices. Add pricing in providers.json for metered cost.">est.</span>' : '');
+}
+// compact strip at the top of Routines (replaces the old run-count impact strip)
+async function loadImpact(){
+  let d; try { d = await api('/api/ledger?days=30'); } catch(e){ return; }
+  const p = $('#impactPanel'); if (!p) return;
+  const t = d.totals;
+  if (!t.outcomes && !d.unverified.length){ p.style.display='none'; return; }
+  p.style.display='';
+  $('#impact').innerHTML = t.outcomes
+    ? `<b>${t.delivered - t.flagged}</b> verified outcome${t.delivered-t.flagged===1?'':'s'} · <b>${_pct(t.unattended_rate)}</b> without a human · `
+      + `<b>${_costLine(t)}</b> per outcome${t.minutes_saved ? ` · <b>${_hrs(t.minutes_saved)}</b> saved` : ''}
+      · <a href="#" onclick="showView('outcomes');return false">ledger</a>`
+    : `No verified outcomes yet — ${d.unverified.length} routine${d.unverified.length===1?' runs':'s run'} without a definition of done. <a href="#" onclick="showView('outcomes');return false">See the ledger</a>`;
+}
+async function loadLedger(){
+  let d; try { d = await api('/api/ledger?days='+LEDGER_DAYS); }
+  catch(e){ $('#lgCards').innerHTML='<div class="hint err">'+esc(e.detail||'failed to load')+'</div>'; return; }
+  const t = d.totals, es = d.escalations;
+  $('#lgRange').textContent = 'last '+d.days+' days';
+  const card = (l,v,s) => `<div class="obs-card"><div class="oc-l">${l}</div><div class="oc-v">${v}</div>${s?'<div class="oc-s">'+s+'</div>':''}</div>`;
+  const good = t.delivered - t.flagged;
+  $('#lgCards').innerHTML =
+    card('Verified outcomes', good, `of ${t.outcomes} · ${t.by_status.failed} not done${t.by_status.needs_you?' · '+t.by_status.needs_you+' need you':''}`) +
+    card('Without a human', _pct(t.unattended_rate), `${t.first_try} first try · ${t.recovered} recovered on their own`) +
+    card('Cost per verified outcome', _costLine(t), t.tokens_per_verified ? _tok(t.tokens_per_verified)+' tokens each' : `${_usd(t.spend_usd)} total`) +
+    card('Time saved', t.minutes_saved ? _hrs(t.minutes_saved) : '—',
+         t.minutes_saved ? `${_usd(t.value_usd)} at $${d.hourly_rate}/h` : (t.baseline_missing ? 'set minutes per outcome below' : '')) +
+    card('Escalations', es.count, es.open ? `${es.open} open${es.oldest_open_h!=null?' · oldest '+_ocAge(es.oldest_open_h):''}`
+         : es.median_wait_h!=null ? 'median wait '+_ocAge(es.median_wait_h) : 'none open') +
+    card('Marked wrong', t.delivered ? _pct(t.false_delivered_rate) : '—', `${t.flagged} of ${t.delivered} delivered`);
+  // daily strip
+  const max = Math.max(1, ...d.daily.map(x => x.delivered+x.failed+x.needs_you+x.other));
+  $('#lgDaily').innerHTML = `<div class="lg-bars" role="img" aria-label="Outcomes per day">${d.daily.map(x => {
+      const seg = (n,c) => n ? `<i class="${c}" style="height:${n/max*100}%"></i>` : '';
+      const tip = `${x.date}: ${x.delivered} verified, ${x.failed} not done, ${x.needs_you} need you`;
+      return `<span title="${tip}">${seg(x.other,'o')}${seg(x.needs_you,'n')}${seg(x.failed,'f')}${seg(x.delivered,'d')}</span>`;
+    }).join('')}</div>
+    <div class="lg-axis"><span>${esc(d.daily[0].date.slice(5))}</span><span>
+      <i class="d"></i> verified <i class="f"></i> not done <i class="n"></i> needs you</span><span>today</span></div>`;
+  $('#lgBlockers').innerHTML = d.blockers.length
+    ? '<h3 class="obs-h3">What keeps getting in the way</h3>' + d.blockers.map(b =>
+        `<div class="filerow"><span class="fname" style="flex:none;min-width:170px">${esc(b.label)}</span>
+         <span class="fmeta" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis" title="${esc(b.example||'')}">${esc(b.routines.join(', '))}${b.example?' — '+esc(b.example):''}</span>
+         <span class="fmeta">${b.count}×</span></div>`).join('')
+    : (t.outcomes ? '<h3 class="obs-h3">What keeps getting in the way</h3><div class="hint">Nothing — every attempt in this window went through.</div>' : '');
+  $('#lgRoutines').innerHTML = d.routines.length
+    ? `<h3 class="obs-h3">By routine</h3><div class="lg-wrap"><table class="lg-table"><thead><tr><th>Routine</th><th>Verified</th><th>No human</th>
+        <th>Cost / outcome</th><th>Tokens / outcome</th><th>Min / outcome</th><th>Saved</th><th>Latest</th></tr></thead><tbody>${
+      d.routines.map(r => {
+        const st = _OC[r.last.status] || {cls:'none', label:r.last.status};
+        return `<tr><td><a href="#" onclick="gotoRoutine(${r.agent_id});return false">${esc(r.name)}</a></td>
+          <td>${r.delivered - r.flagged}/${r.outcomes}</td><td>${_pct(r.unattended_rate)}</td>
+          <td>${_costLine(r)}</td><td>${_tok(r.tokens_per_verified)}</td>
+          <td><input type="number" min="0" class="lg-min" value="${r.baseline_minutes ?? ''}" placeholder="set"
+               title="Minutes of a person's work one verified outcome replaces" onchange="setBaseline(${r.agent_id}, this.value)"></td>
+          <td>${r.minutes_saved ? _hrs(r.minutes_saved) : '—'}</td>
+          <td><span class="badge b-${st.cls}">${esc(r.last.flagged ? 'marked wrong' : st.label)}</span></td></tr>`;
+      }).join('')}</tbody></table></div>`
+    : '<div class="hint">No outcomes in this window. Give a routine a definition of done and its runs become verified outcomes.</div>';
+  $('#lgUnverified').innerHTML = d.unverified.length
+    ? `<h3 class="obs-h3">Running without a definition of done</h3>
+       <div class="hint" style="margin-bottom:8px">These routines' runs are reported, not verified, so they don't count as outcomes.</div>` +
+      d.unverified.map(u => `<div class="filerow"><span class="fname">${esc(u.name)}</span>
+        <span class="fmeta">${u.n} run${u.n===1?'':'s'} · ${u.ok} succeeded</span>
+        <a href="#" onclick="openDod(${u.agent_id});return false">Define what done means</a></div>`).join('')
+    : '';
+}
+function _ocAge(h){ return h < 1 ? Math.max(1, Math.round(h*60))+'m' : h < 48 ? Math.round(h)+'h' : Math.round(h/24)+'d'; }
+window.setLedgerDays = (n) => {
+  LEDGER_DAYS = n;
+  document.querySelectorAll('#lgDays button').forEach(b => b.classList.toggle('on', Number(b.dataset.d)===n));
+  loadLedger();
+};
+window.setBaseline = async (aid, v) => {
+  const n = v === '' ? null : Math.max(0, parseInt(v, 10) || 0);
+  try { await api(`/api/agents/${aid}/baseline`, {method:'PUT', body:JSON.stringify({minutes:n})}); toast('Saved', 'ok'); }
+  catch(e){ toast(e.detail||e.message||'error','err'); }
+  loadLedger();
+};
+// "this passed its checks but wasn't right" — the false-delivered signal
+window.flagOutcome = async (oid, undo) => {
+  try {
+    if (undo) await api('/api/outcomes/'+oid+'/flag', {method:'DELETE'});
+    else {
+      const inp = $('#flagNote'+oid);
+      await api('/api/outcomes/'+oid+'/flag', {method:'POST', body:JSON.stringify({note:(inp && inp.value.trim()) || ''})});
+      toast("Marked wrong — tighten the checks so this can't pass again", 'ok');
+    }
+  } catch(e){ toast(e.detail||e.message||'error','err'); }
   if (CURRENT_TASK_ID) openTask(CURRENT_TASK_ID);
 };
 
@@ -2870,18 +3015,6 @@ function appendEvent(e){
 }
 
 // ---------------- connections (dedicated modal, scales to many) ----------------
-async function loadImpact(){
-  let d;
-  try { d = await api('/api/impact'); } catch(e){ return; }
-  const p = $('#impactPanel'); if (!p) return;
-  if (!d.agents){ p.style.display='none'; return; }
-  p.style.display='';
-  const hrs = (d.minutes_saved/60).toFixed(1);
-  $('#impact').innerHTML =
-    `<b>${d.runs_succeeded}</b> runs completed · <b>${hrs}h</b> saved · `
-    + `<b>${_usd(d.cost_saved_usd)}</b> value delivered · `
-    + `${_usd(d.spend_usd)} spent · ${d.agents} agent${d.agents===1?'':'s'}`;
-}
 
 let CONN = { enabled:false, list:[] };
 async function loadConnectors(){
@@ -3307,6 +3440,8 @@ async function loadLive(){
   }
   const nr = $('#navRoutines');
   if (nr){ if (d.running_count>0){ nr.textContent=d.running_count; nr.style.display=''; } else { nr.style.display='none'; } }
+  const nn = $('#navNeedsYou'), nyc = (d.needs_you||[]).length;
+  if (nn){ nn.textContent = nyc; nn.style.display = nyc ? '' : 'none'; }
   renderWelcomeLive();
   renderNeedsYou();
 }

@@ -37,6 +37,9 @@ class Provider:
     # gateway (LiteLLM /v1/models) so the UI reflects exactly what's routable —
     # `models` above is the fallback when the gateway is unreachable.
     dynamic_models: bool = False
+    # USD per million tokens, by model ("*" = any): {"input","output","cache_read","cache_write"}.
+    # Used by app/metering.py for real per-run cost; unset → the SDK's estimate.
+    pricing: dict = field(default_factory=dict)
 
 
 _BUILTINS: list[Provider] = [

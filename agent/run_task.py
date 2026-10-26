@@ -172,6 +172,8 @@ async def run(spec: dict) -> int:
                     "is_error": is_error,
                     "num_turns": getattr(msg, "num_turns", None),
                     "cost_usd": getattr(msg, "total_cost_usd", None),
+                    "usage": getattr(msg, "usage", None),
+                    "model_usage": getattr(msg, "model_usage", None),
                     "session_id": getattr(msg, "session_id", None),
                     "result": getattr(msg, "result", None),
                 })

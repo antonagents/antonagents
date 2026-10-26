@@ -356,6 +356,14 @@ async def init() -> None:
     await _ensure_column("runs", "outcome_id", "INTEGER")
     await _ensure_column("runs", "attempt", "INTEGER")
     await _ensure_column("runs", "memory", "TEXT")               # per-run memory override
+    # metering (step 5): what served the run, its token usage, and how cost was derived
+    await _ensure_column("runs", "provider", "TEXT")
+    await _ensure_column("runs", "model", "TEXT")
+    await _ensure_column("runs", "usage_json", "TEXT")
+    await _ensure_column("runs", "cost_basis", "TEXT")
+    await _ensure_column("outcomes", "flagged_at", "TEXT")      # "this outcome was wrong"
+    await _ensure_column("outcomes", "flag_note", "TEXT")
+    await _backfill_run_routes()
     # outcome recovery (step 2): when the next attempt is due + the attempt log
     await _ensure_column("outcomes", "next_attempt_at", "TEXT")
     await _ensure_column("outcomes", "recovery_json", "TEXT")
@@ -1009,13 +1017,40 @@ async def mark_run_started(run_id: int) -> None:
 
 async def finish_run(run_id: int, *, status: str, exit_code: Optional[int] = None,
                      cost_usd: Optional[float] = None, result: Optional[str] = None,
-                     error: Optional[str] = None) -> None:
+                     error: Optional[str] = None, usage: Optional[dict] = None,
+                     cost_basis: Optional[str] = None) -> None:
     await _db.execute(
         """UPDATE runs SET status=?, finished_at=?, exit_code=?, cost_usd=?,
-           result=COALESCE(?, result), error=COALESCE(?, error) WHERE id=?""",
-        (status, _now(), exit_code, cost_usd, result, error, run_id),
+           result=COALESCE(?, result), error=COALESCE(?, error),
+           usage_json=COALESCE(?, usage_json), cost_basis=COALESCE(?, cost_basis) WHERE id=?""",
+        (status, _now(), exit_code, cost_usd, result, error,
+         json.dumps(usage) if usage else None, cost_basis, run_id),
     )
     await _db.commit()
+
+
+async def set_run_route(run_id: int, provider: str, model: Optional[str]) -> None:
+    await _db.execute("UPDATE runs SET provider=?, model=? WHERE id=?", (provider, model, run_id))
+    await _db.commit()
+
+
+async def _backfill_run_routes() -> None:
+    """Older runs: recover provider/model from their 'routed' event (once)."""
+    cur = await _db.execute(
+        """SELECT r.id, e.data FROM runs r JOIN events e ON e.run_id=r.id AND e.type='routed'
+           WHERE r.provider IS NULL""")
+    rows = await cur.fetchall()
+    for r in rows:
+        try:
+            d = json.loads(r["data"])
+        except (TypeError, ValueError):
+            continue
+        if d.get("provider"):
+            await _db.execute("UPDATE runs SET provider=?, model=?, cost_basis=? WHERE id=?",
+                              (d["provider"], d.get("model"),
+                               "metered" if d["provider"] == "anthropic" else "estimate", r["id"]))
+    if rows:
+        await _db.commit()
 
 
 async def set_run_session_id(run_id: int, session_id: str) -> None:
@@ -1757,6 +1792,48 @@ async def inflight_outcome(agent_id: int) -> Optional[dict]:
         "ORDER BY id DESC LIMIT 1", (agent_id,))
     row = await cur.fetchone()
     return _outcome_row(row) if row else None
+
+
+async def ledger_rows(org_id: int, since_iso: str) -> dict:
+    """Raw material for the outcome ledger (app/ledger.py aggregates it)."""
+    cur = await _db.execute(
+        """SELECT o.id, o.agent_id, a.name, a.baseline_minutes, o.trigger, o.status, o.attempts,
+                  o.started_at, o.finished_at, o.verified_at, o.recovery_json, o.flagged_at,
+                  o.needs_you_reason
+           FROM outcomes o JOIN agents a ON a.id=o.agent_id
+           WHERE o.org_id=? AND o.started_at >= ? AND o.trigger != 'dry_run'
+           ORDER BY o.id""", (org_id, since_iso))
+    outs = [dict(r) for r in await cur.fetchall()]
+    runs = {}
+    if outs:
+        ids = [o["id"] for o in outs]
+        cur = await _db.execute(
+            f"""SELECT outcome_id, cost_usd, cost_basis, usage_json, provider, model FROM runs
+                WHERE outcome_id IN ({",".join("?" * len(ids))})""", ids)
+        for r in await cur.fetchall():
+            runs.setdefault(r["outcome_id"], []).append(dict(r))
+    # routine runs that no definition of done covers (not counted as outcomes)
+    cur = await _db.execute(
+        """SELECT a.id agent_id, a.name, count(r.id) n,
+                  sum(CASE WHEN r.status='succeeded' THEN 1 ELSE 0 END) ok
+           FROM runs r JOIN agents a ON a.id=r.agent_id
+           WHERE a.org_id=? AND coalesce(a.kind,'routine')='routine' AND r.outcome_id IS NULL
+             AND r.created_at >= ?
+             AND NOT EXISTS (SELECT 1 FROM job_specs s WHERE s.agent_id=a.id AND s.status='published')
+           GROUP BY a.id ORDER BY n DESC""", (org_id, since_iso))
+    unverified = [dict(r) for r in await cur.fetchall()]
+    return {"outcomes": outs, "runs": runs, "unverified": unverified}
+
+
+async def flag_outcome(outcome_id: int, note: Optional[str]) -> None:
+    await _db.execute("UPDATE outcomes SET flagged_at=?, flag_note=? WHERE id=?",
+                      (_now() if note is not None else None, note, outcome_id))
+    await _db.commit()
+
+
+async def set_baseline(agent_id: int, minutes: Optional[int]) -> None:
+    await _db.execute("UPDATE agents SET baseline_minutes=? WHERE id=?", (minutes, agent_id))
+    await _db.commit()
 
 
 async def outcome_cost(outcome_id: int) -> float:

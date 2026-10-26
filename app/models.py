@@ -174,3 +174,12 @@ class TestChecksIn(BaseModel):
 class ResolveIn(BaseModel):
     action: Literal["retry", "answer", "dismiss"]
     message: Optional[str] = Field(None, max_length=2000)
+
+
+class FlagIn(BaseModel):
+    """'This outcome was wrong' — feeds the false-delivered rate."""
+    note: str = Field("", max_length=1000)
+
+
+class BaselineIn(BaseModel):
+    minutes: Optional[int] = Field(None, ge=0, le=100000)
