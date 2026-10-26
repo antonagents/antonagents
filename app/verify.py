@@ -245,7 +245,9 @@ Return ONLY JSON:
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"\s+", " ", (s or "")).strip().lower()
+    """Words only, in order: a quote still has to appear verbatim, but markdown,
+    dashes, arrows and quote styles (which models re-type) don't matter."""
+    return " ".join(re.findall(r"\w+", (s or "").lower()))
 
 
 def grade(criteria: list[str], answer: Optional[dict], content: str) -> tuple[float, list[dict]]:
@@ -261,7 +263,7 @@ def grade(criteria: list[str], answer: Optional[dict], content: str) -> tuple[fl
         met = bool(c.get("met"))
         ev = str(c.get("evidence") or "")[:300]
         why = str(c.get("why") or "")[:300]
-        if met and (len(_norm(ev)) < 5 or _norm(ev) not in hay):
+        if met and (len(_norm(ev).split()) < 3 or f" {_norm(ev)} " not in f" {hay} "):
             met, why = False, "the judge's quoted evidence isn't in the output"
         out.append({"criterion": crit, "met": met, "evidence": ev if met else "", "why": why})
     score = sum(1 for c in out if c["met"]) / len(out) if out else 0.0
