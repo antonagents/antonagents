@@ -13,7 +13,7 @@ import shlex
 from typing import Optional
 from urllib.parse import unquote, urlparse
 
-from . import alerts, config, connectors, db, metering, outcomes, providers, router
+from . import alerts, config, connectors, db, gateway, guardrails, metering, outcomes, providers, router
 
 # bounded concurrency across all runs
 _sem: Optional[asyncio.Semaphore] = None
@@ -284,9 +284,10 @@ _UPLOADS_NOTE = (
 
 def _build_spec(agent: dict, model: str, *, prompt: str, resume: Optional[str],
                 mcp_servers: Optional[dict], skills: Optional[list],
-                db_note: Optional[str] = None, search_note: Optional[str] = None) -> dict:
+                db_note: Optional[str] = None, search_note: Optional[str] = None,
+                guard_note: Optional[str] = None) -> dict:
     system_prompt = agent.get("system_prompt") or ""
-    notes = [db_note, search_note, _ARTIFACTS_NOTE]
+    notes = [db_note, search_note, guard_note, _ARTIFACTS_NOTE]
     # Uploads work for chats and (interactive) routines alike — inject the note for
     # both. It's inert on a scheduled routine run (no files uploaded then).
     notes.append(_UPLOADS_NOTE)
@@ -353,6 +354,7 @@ async def execute_run(run_id: int, agent: dict) -> None:
     resume = agent.get("last_session_id") if (run and run.get("resume")) else None
     run_memory = (run and run.get("memory")) or None   # outcome OOM recovery override
     mcp_servers = None
+    guard_note = None
 
     # outcome jobs: a routine with a published job spec turns this run into an
     # attempt toward an outcome, and the agent is told the definition of done
@@ -428,8 +430,21 @@ async def execute_run(run_id: int, agent: dict) -> None:
                         connectors.get_connector().agent_provisioning, owner_id, use
                     )
                     if prov and prov.get("mcp_servers"):
-                        mcp_servers = prov["mcp_servers"]
-                        await handle({"type": "tools", "connected": use})
+                        # every connector call goes through the action gateway: the
+                        # container gets a per-run URL, never the provider key
+                        run_row = await db.get_run(run_id) or {"id": run_id}
+                        gated = {}
+                        for name, srv in prov["mcp_servers"].items():
+                            g = gateway.register(run_row, agent, srv)
+                            if g:
+                                gated[name] = g
+                        if gated:
+                            mcp_servers = gated
+                            guard_note = guardrails.prompt_note(guardrails.policy_for(agent))
+                            await handle({"type": "tools", "connected": use, "gateway": True})
+                        else:
+                            await handle({"type": "log", "text": "connectors unavailable: the action "
+                                          "gateway isn't running, so connector access is off for this run"})
             except Exception as e:  # noqa: BLE001
                 await handle({"type": "log", "text": f"connector provisioning skipped: {e}"})
 
@@ -511,6 +526,7 @@ async def execute_run(run_id: int, agent: dict) -> None:
             )
         except FileNotFoundError:
             oom_task.cancel()
+            gateway.unregister_run(run_id)
             await handle({"type": "error", "message": "docker not found on PATH"})
             await db.finish_run(run_id, status="failed", error="docker not found")
             _publish(run_id, {"type": "status", "status": "failed"})
@@ -521,7 +537,7 @@ async def execute_run(run_id: int, agent: dict) -> None:
         proc.stdin.write((json.dumps(_build_spec(
             agent, model, prompt=prompt, resume=resume,
             mcp_servers=mcp_servers, skills=skills, db_note=db_note,
-            search_note=search_note)) + "\n").encode())
+            search_note=search_note, guard_note=guard_note)) + "\n").encode())
         await proc.stdin.drain()
         proc.stdin.close()
 
@@ -590,6 +606,7 @@ async def execute_run(run_id: int, agent: dict) -> None:
                 if exit_code == 137:   # SIGKILL under a mem cap: almost always OOM (flag unseen)
                     error = f"{error} (likely out of memory — exceeded {run_memory or config.TASK_MEMORY})"
 
+        gateway.unregister_run(run_id)          # the run's connector URL stops working
         status = "succeeded" if (exit_code == 0 and not error) else "failed"
         cost_usd, basis = metering.cost(route.get("provider"), route.get("model"), usage, cost_usd)
         await db.finish_run(

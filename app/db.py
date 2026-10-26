@@ -12,6 +12,7 @@ repointed to agent_id, tasks dropped).
 """
 import hashlib
 import json
+import logging
 import secrets
 import time
 from pathlib import Path
@@ -22,6 +23,7 @@ import aiosqlite
 from . import config
 
 _db: Optional[aiosqlite.Connection] = None
+log = logging.getLogger("antonagents.db")
 
 
 def _now() -> str:
@@ -325,6 +327,28 @@ CREATE TABLE IF NOT EXISTS escalations (
 );
 CREATE INDEX IF NOT EXISTS idx_escalations_retry ON escalations(status, next_try_at);
 
+-- every connector action an agent asked for, as seen by the action gateway
+CREATE TABLE IF NOT EXISTS actions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id      INTEGER NOT NULL,
+    agent_id    INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    run_id      INTEGER,
+    outcome_id  INTEGER,
+    owner_id    INTEGER,
+    tool_slug   TEXT NOT NULL,
+    category    TEXT NOT NULL,
+    decision    TEXT NOT NULL,                       -- allow | approve | block
+    status      TEXT NOT NULL,                       -- forwarded | held | blocked | approved | executed | failed | rejected
+    args_json   TEXT,
+    result      TEXT,
+    error       TEXT,
+    decided_by  TEXT,
+    decided_at  TEXT,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_actions_run ON actions(run_id);
+CREATE INDEX IF NOT EXISTS idx_actions_held ON actions(org_id, status);
+
 CREATE INDEX IF NOT EXISTS idx_job_specs_agent ON job_specs(agent_id, status);
 CREATE INDEX IF NOT EXISTS idx_job_checks_spec ON job_checks(spec_id, position);
 CREATE INDEX IF NOT EXISTS idx_outcomes_agent ON outcomes(agent_id, id);
@@ -385,6 +409,7 @@ async def init() -> None:
     await _ensure_column("runs", "cost_basis", "TEXT")
     await _ensure_column("outcomes", "flagged_at", "TEXT")      # "this outcome was wrong"
     await _ensure_column("job_specs", "escalate_to_json", "TEXT")  # None = default (owner email)
+    await _ensure_column("agents", "action_policy_json", "TEXT")   # guardrails overrides
     await _ensure_column("outcomes", "flag_note", "TEXT")
     # human checks (step 6): approval gate + sampled spot-checks
     for col in ("review_requested_at", "reviewed_at", "reviewed_by", "review_note", "review_verdict"):
@@ -546,6 +571,19 @@ async def _migrate() -> None:
         await _db.commit()
 
 
+async def release() -> None:
+    """Commit a transaction that a failed statement left open. Python's sqlite3
+    opens a transaction before a write and keeps it open when the statement fails;
+    on our single shared connection that holds the database write lock until the
+    next commit, locking out every other writer (seen when a routine was deleted
+    mid-delivery and the insert hit its foreign key)."""
+    if _db is not None and _db.in_transaction:
+        try:
+            await _db.commit()
+        except Exception:  # noqa: BLE001
+            log.exception("could not release an open transaction")
+
+
 async def close() -> None:
     if _db is not None:
         await _db.close()
@@ -604,6 +642,7 @@ def _agent_row(r: aiosqlite.Row, with_env: bool = True) -> dict:
     d["env"] = _decrypt_env(raw) if with_env else {}
     at = d.pop("allowed_tools_json", None)
     d["allowed_tools"] = json.loads(at) if at else None
+    d["action_policy"] = _unj(d.pop("action_policy_json", None))
     return d
 
 
@@ -1264,7 +1303,14 @@ async def list_needs_you(org_id: int) -> list[dict]:
             d["checks"] = [{"name": c.get("name"), "passed": c.get("passed"), "kind": c.get("kind"),
                             "observed": c.get("observed")} for c in receipt.get("checks") or []
                            if c.get("kind") != "human"]
+            d["held_actions"] = receipt.get("held_actions") or []
         out.append(d)
+    # held connector actions from runs that aren't outcomes (chats, plain routines)
+    for a in await held_actions_without_outcome(org_id):
+        out.append({"kind": "action", "action_id": a["id"], "agent_id": a["agent_id"],
+                    "name": a["agent_name"], "at": a["created_at"], "run_id": a["run_id"],
+                    "tool_slug": a["tool_slug"], "category": a["category"], "args": a["args"],
+                    "reason": f"{a['tool_slug']} is waiting for your approval"})
     return out
 
 
@@ -1812,6 +1858,7 @@ async def get_outcome(outcome_id: int) -> Optional[dict]:
     o["runs"] = [dict(x) for x in await cur.fetchall()]
     o["deliveries"] = await list_deliveries(outcome_id)
     o["escalations"] = await list_escalations(outcome_id)
+    o["actions"] = await list_actions(outcome_id=outcome_id, limit=50)
     return o
 
 
@@ -1963,6 +2010,76 @@ async def list_escalations(outcome_id: int) -> list[dict]:
         "SELECT id, event, round, kind, target, status, attempts, last_error, sent_at FROM escalations "
         "WHERE outcome_id=? ORDER BY id", (outcome_id,))
     return [dict(r) for r in await cur.fetchall()]
+
+
+# ---------- actions (connector gateway) ----------
+
+async def add_action(*, org_id: int, agent_id: int, run_id: Optional[int], outcome_id: Optional[int],
+                     owner_id: Optional[int], tool_slug: str, category: str, decision: str,
+                     status: str, args: Optional[dict]) -> int:
+    cur = await _db.execute(
+        """INSERT INTO actions (org_id, agent_id, run_id, outcome_id, owner_id, tool_slug, category,
+               decision, status, args_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (org_id, agent_id, run_id, outcome_id, owner_id, tool_slug, category, decision, status,
+         json.dumps(args or {}, default=str)[:20000], _now()))
+    await _db.commit()
+    return cur.lastrowid
+
+
+async def set_action(action_id: int, *, status: str, result: Optional[str] = None,
+                     error: Optional[str] = None, decided_by: Optional[str] = None,
+                     only_if: Optional[str] = None) -> bool:
+    """Move an action to `status`. With only_if, only from that status (claims it)."""
+    q = ("UPDATE actions SET status=?, result=COALESCE(?, result), error=COALESCE(?, error), "
+         "decided_by=COALESCE(?, decided_by), decided_at=CASE WHEN ? IS NOT NULL THEN ? ELSE decided_at END "
+         "WHERE id=?")
+    args = [status, result, error, decided_by, decided_by, _now(), action_id]
+    if only_if:
+        q += " AND status=?"
+        args.append(only_if)
+    cur = await _db.execute(q, args)
+    await _db.commit()
+    return cur.rowcount == 1
+
+
+def _action_row(r) -> dict:
+    d = dict(r)
+    d["args"] = _unj(d.pop("args_json", None)) or {}
+    return d
+
+
+async def get_action(action_id: int) -> Optional[dict]:
+    row = await (await _db.execute("SELECT * FROM actions WHERE id=?", (action_id,))).fetchone()
+    return _action_row(row) if row else None
+
+
+async def list_actions(*, run_id: Optional[int] = None, outcome_id: Optional[int] = None,
+                       agent_id: Optional[int] = None, status: Optional[str] = None,
+                       limit: int = 100) -> list[dict]:
+    where, args = [], []
+    for col, v in (("run_id", run_id), ("outcome_id", outcome_id), ("agent_id", agent_id),
+                   ("status", status)):
+        if v is not None:
+            where.append(f"{col}=?")
+            args.append(v)
+    q = "SELECT * FROM actions" + (" WHERE " + " AND ".join(where) if where else "") + \
+        " ORDER BY id DESC LIMIT ?"
+    cur = await _db.execute(q, args + [limit])
+    return [_action_row(r) for r in await cur.fetchall()]
+
+
+async def held_actions_without_outcome(org_id: int) -> list[dict]:
+    """Held actions from runs that aren't part of an outcome (chats, plain routines)."""
+    cur = await _db.execute(
+        """SELECT x.*, a.name agent_name FROM actions x JOIN agents a ON a.id=x.agent_id
+           WHERE x.org_id=? AND x.status='held' AND x.outcome_id IS NULL ORDER BY x.id DESC LIMIT 30""",
+        (org_id,))
+    return [_action_row(r) for r in await cur.fetchall()]
+
+
+async def set_action_policy(agent_id: int, policy: Optional[dict]) -> None:
+    await _db.execute("UPDATE agents SET action_policy_json=? WHERE id=?", (_j(policy), agent_id))
+    await _db.commit()
 
 
 async def list_deliveries(outcome_id: int) -> list[dict]:

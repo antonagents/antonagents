@@ -67,6 +67,15 @@
 > Fired on needs-you, awaiting approval, gave up and permanently failed delivery;
 > sent once per destination per round, retried 3× (config errors aren't retried),
 > with a deep link to `/app/routines/<id>`.
+> **Guardrails + action gateway (2026-10-26):** every connector call goes through an
+> internal MCP proxy (`app/gateway.py`) — the provider key no longer enters
+> containers. Actions are classified and the routine's policy allows, holds for
+> approval, or blocks them (defaults: messages/deletes/payments held, opaque code and
+> connection changes blocked; chats allow all). Held actions put an outcome into
+> *Awaiting approval*; approving runs each once, as requested, then verifies;
+> held actions from chats/plain routines appear in the inbox. All actions are
+> audited (`actions` table). Not covered: DB writes (use a SELECT-only role),
+> other credentials, general egress — see docs/SECURITY.md.
 > Positioning decision behind it: see `positioning` memory — "outcome-based, not
 > ask-and-it-does".
 

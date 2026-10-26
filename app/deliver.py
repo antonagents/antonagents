@@ -218,18 +218,24 @@ async def send_owner_email(owner_id: Optional[int], subject: str, body: str) -> 
     return f"emailed {user['email']}"
 
 
+async def sdk_execute(slug: str, args: dict, user_id) -> tuple[bool, object, object]:
+    """Run one connector tool server-side as `user_id`. Returns (ok, data, error).
+    Uses the toolkit's latest version — the same one the agent's tool-router session
+    used to build the arguments (the SDK refuses manual runs without a version)."""
+    client = _composio()
+    resp = await asyncio.to_thread(client.tools.execute, slug, args, user_id=str(user_id),
+                                   dangerously_skip_version_check=True)
+    get = (lambda k: resp.get(k)) if isinstance(resp, dict) else (lambda k: getattr(resp, k, None))
+    return bool(get("successful")), get("data"), get("error")
+
+
 async def _execute(owner_id: int, provider: str, slug: str, args: dict) -> str:
     conn = await db.get_connection(owner_id, provider)
     if not conn or conn.get("status") != "active":
         raise DeliveryError(f"{provider.capitalize()} isn't connected for the routine's owner — "
                             "connect it in Connectors")
-    client = _composio()
-    resp = await asyncio.to_thread(client.tools.execute, slug, args, user_id=str(owner_id))
-    ok = getattr(resp, "successful", None)
-    if ok is None and isinstance(resp, dict):
-        ok = resp.get("successful")
+    ok, _, err = await sdk_execute(slug, args, owner_id)
     if not ok:
-        err = getattr(resp, "error", None) or (resp.get("error") if isinstance(resp, dict) else None)
         raise DeliveryError(f"{provider} rejected it: {str(err)[:200]}")
     return f"{slug} ok"
 

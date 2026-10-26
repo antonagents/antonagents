@@ -209,3 +209,14 @@ class JobCreateIn(BaseModel):
     mode: Literal["live", "dry_run", "draft"] = "dry_run"
     from_chat_id: Optional[int] = None     # copy that chat's workspace files
     baseline_minutes: Optional[int] = Field(None, ge=0, le=100000)
+
+
+class GuardrailsIn(BaseModel):
+    """A routine's overrides: {category: allow|approve|block} and per-tool rules."""
+    categories: dict = Field(default_factory=dict)
+    tools: dict = Field(default_factory=dict)
+
+
+class ActionDecisionIn(BaseModel):
+    decision: Literal["approve", "reject"]
+    note: str = Field("", max_length=1000)

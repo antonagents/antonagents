@@ -44,11 +44,11 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import (auth, config, connectors, db, db_access, deliver, escalate, ledger, outcomes, planner, providers, ratelimit, runner,
+from . import (auth, config, connectors, db, db_access, deliver, escalate, gateway, guardrails, ledger, outcomes, planner, providers, ratelimit, runner,
                scheduler, templates, verify)
 from .auth import current_user
 from .connectors import db_driver
-from .models import (BaselineIn, FlagIn, JobCreateIn, JobPlanIn, ReviewIn, AgentAlertsIn, AgentConnectorsIn, AgentCreate, AgentModelIn, AgentNameIn,
+from .models import (ActionDecisionIn, BaselineIn, FlagIn, GuardrailsIn, JobCreateIn, JobPlanIn, ReviewIn, AgentAlertsIn, AgentConnectorsIn, AgentCreate, AgentModelIn, AgentNameIn,
                      AgentDbConnectionsIn, AgentScheduleIn, AgentSkillsIn, ApiKeyIn,
                      DbConnectionIn, DbConnectionTestIn, DbConnectionUpdateIn,
                      InvitationIn, JobSpecIn, LoginIn, MemberRoleIn, ResolveIn,
@@ -75,14 +75,9 @@ async def lifespan(app: FastAPI):
     # data sources: measure what each login can really do (once, for older rows)
     asyncio.create_task(_assess_unchecked())
     if config.CONNECTORS_ENABLED:
-        # The per-user MCP config injected into task containers currently carries
-        # the org-wide connector key — a task with shell+network could exfiltrate
-        # it. Safe only when all users are trusted. See docs/SECURITY.md.
-        log.warning(
-            "Connectors enabled (%s): the provider key is injected into task "
-            "containers — enable only for trusted users. See docs/SECURITY.md.",
-            config.CONNECTORS_PROVIDER,
-        )
+        # connector calls go through the action gateway (internal listener): it
+        # holds the provider key and enforces each routine's guardrails
+        asyncio.create_task(gateway.serve())
     yield
     scheduler.shutdown()
     await db.close()
@@ -515,7 +510,10 @@ async def get_agent(agent_id: int, user: dict = Depends(current_user)):
     out["baseline_minutes"] = agent.get("baseline_minutes")
     out["timeout_secs"] = agent.get("timeout_secs")
     out["spec"] = await db.get_latest_spec(agent_id)
+    out["guardrails"] = guardrails.policy_for(agent)
     out["outcomes"] = await db.list_outcomes(agent_id, limit=10)
+    if out["outcomes"]:   # the card shows the latest one in full: deliveries, escalations, actions
+        out["outcomes"][0] = await db.get_outcome(out["outcomes"][0]["id"]) or out["outcomes"][0]
     out["impact"] = _with_cost(await db.agent_impact(agent_id, agent.get("baseline_minutes")))
     out["alerts"] = await db.get_agent_alerts(agent_id)
     return out
@@ -1396,6 +1394,55 @@ async def escalation_channels(user: dict = Depends(current_user)):
     """What a job can escalate to, for the editor."""
     return {"owner_email": deliver.smtp_available(), "email": user.get("email"),
             "connected": sorted(set(await db.active_providers(user["id"])) & {"slack", "gmail", "outlook"})}
+
+
+# ---------------- guardrails + the action gateway ----------------
+
+@app.get("/api/agents/{agent_id}/guardrails")
+async def get_guardrails(agent_id: int, user: dict = Depends(current_user)):
+    """The routine's effective connector policy, its overrides, and the defaults."""
+    agent = await _owned_agent_or_404(agent_id, user)
+    is_chat = (agent.get("kind") or "routine") == "chat"
+    return {"effective": guardrails.policy_for(agent), "custom": agent.get("action_policy") or {},
+            "defaults": guardrails.CHAT_DEFAULT if is_chat else guardrails.ROUTINE_DEFAULT,
+            "categories": guardrails.CATEGORIES, "gateway": gateway.STATE["up"]}
+
+
+@app.put("/api/agents/{agent_id}/guardrails")
+async def put_guardrails(agent_id: int, body: GuardrailsIn, user: dict = Depends(current_user)):
+    await _owned_agent_or_404(agent_id, user)
+    try:
+        policy = guardrails.normalize(body.model_dump())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    await db.set_action_policy(agent_id, policy if (policy["categories"] or policy["tools"]) else None)
+    return await get_guardrails(agent_id, user)
+
+
+@app.get("/api/agents/{agent_id}/actions")
+async def agent_actions(agent_id: int, run_id: int | None = None,
+                        user: dict = Depends(current_user)):
+    """Every connector action this routine asked for (newest first): the audit trail."""
+    await _owned_agent_or_404(agent_id, user)
+    return await db.list_actions(agent_id=agent_id, run_id=run_id, limit=200)
+
+
+@app.post("/api/actions/{action_id}/decide")
+async def decide_action(action_id: int, body: ActionDecisionIn, user: dict = Depends(current_user)):
+    """Approve (run it once, now) or reject a held action from a chat or a routine
+    without a definition of done. Outcome jobs decide through /review instead."""
+    a = await db.get_action(action_id)
+    if not a or a["org_id"] != _org_id(user):
+        raise HTTPException(404, "action not found")
+    if a.get("outcome_id"):
+        raise HTTPException(409, "this action belongs to an outcome — review the outcome instead")
+    who = user.get("name") or user.get("email") or f"user {user['id']}"
+    try:
+        if body.decision == "approve":
+            return await gateway.execute_approved(action_id, who)
+        return await gateway.reject(action_id, who, body.note)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
 
 
 @app.get("/api/needs-you")

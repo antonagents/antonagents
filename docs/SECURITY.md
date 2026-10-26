@@ -32,24 +32,37 @@ steps. We'll acknowledge and work on a fix before any public disclosure.
   data-source credentials and agent env become **unrecoverable**. Set a stable,
   long, random value in production and store it safely.
 
-## Connectors (SaaS integrations) — trusted-use only
+## Connectors (SaaS integrations) and the action gateway
 
 Connectors (Composio) are **disabled by default** — they only activate when you set
-`COMPOSIO_API_KEY`. **Leave them off unless every user on the instance is trusted.**
+`COMPOSIO_API_KEY`.
 
-When enabled, the runner injects a per-user MCP server config into the task
-container so the agent can act as that user. That config currently carries the
-**org-wide Composio API key** as an `x-api-key` header
-(`app/connectors/composio_driver.py`). Because a task container runs
-agent-controlled code with shell and network access, a malicious or
-prompt-injected task could read that key and reach **every** connected user's
-accounts. The app logs a warning at startup when connectors are enabled.
+Every connector call a run makes goes through the **action gateway**
+(`app/gateway.py`), an internal listener on the task network's gateway address
+(`SUPERAGENT_GATEWAY_HOST`/`_PORT`, default `<docker bridge>:8090`, never public):
 
-**Mitigation / roadmap:** a host-side MCP proxy that holds the org key and injects
-per-user scoping (so the key never enters a task container), or a Composio-issued
-per-session scoped token. Until then, treat connectors as trusted-internal-use
-only. This is tracked as a separate hardening track and is the gate before
-onboarding untrusted external tenants.
+- **The provider key never enters a task container.** A run gets a per-run URL
+  (`/mcp/<random token>`) that only reaches its owner's connector session, only
+  while the run is alive; the gateway adds the key server-side. (Previously the
+  org-wide key was injected into containers — fixed 2026-10-26.) If the gateway
+  can't start, runs get **no** connectors rather than the key.
+- **Guardrails** (`app/guardrails.py`): each action is classified (read, write,
+  message, destructive, money, code, admin) and the routine's policy decides
+  *allow*, *approve* (held; a person approves and the platform runs it once,
+  exactly as requested) or *block*. Routine defaults: messages, deletes and
+  payments need approval; opaque code execution in the provider sandbox and
+  connection changes are blocked. Chats allow everything (a person is present).
+  Per-routine overrides and per-tool rules live in the console (Guardrails).
+- **Audit**: every action is recorded in the `actions` table with its arguments,
+  decision, result and who approved it.
+
+What guardrails do **not** cover (enforce these elsewhere):
+
+- **Database writes.** Data-source access is a DSN inside the container; the
+  only real write protection is a SELECT-only database role (see Data sources).
+- **Other credentials you give a routine** (env secrets, API keys) — code in the
+  container can call those services directly.
+- **General internet egress** from task containers (see Known limitations).
 
 ## Run execution & isolation
 
@@ -76,7 +89,7 @@ onboarding untrusted external tenants.
 These are acceptable for trusted self-hosting but must be addressed before running
 an untrusted/public instance:
 
-1. Connector org-key injection into task containers (see above).
+1. ~~Connector org-key injection into task containers~~ — fixed by the action gateway (2026-10-26).
 2. Full-egress task network (abuse vector for untrusted users).
 3. Single global encryption key (`SUPERAGENT_SESSION_SECRET`) rather than
    per-tenant keys / KMS.

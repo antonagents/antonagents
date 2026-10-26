@@ -108,6 +108,7 @@ async def finish_attempt(run_id: int) -> None:
             await verify_outcome(run["outcome_id"], attempt=run.get("attempt") or 1)
     except Exception:  # noqa: BLE001
         log.exception("outcome verification failed for run %s", run_id)
+        await db.release()
 
 
 def _secs(a: Optional[str], b: Optional[str]) -> Optional[int]:
@@ -219,6 +220,33 @@ async def verify_outcome(outcome_id: int, attempt: Optional[int] = None,
             preview = deliver.compose({**o, "manifest": manifest, "receipt": {}}, agent_ or {}, msg)["plain"]
         except Exception:  # noqa: BLE001
             log.exception("could not build the dry-run delivery preview")
+    held = [a for a in await db.list_actions(outcome_id=outcome_id, status="held")] if gated else []
+    if held:
+        # guardrails: the agent asked for actions that need a person (send, delete, pay…).
+        # Nothing else happens until they decide; approving runs them, then we verify.
+        receipt = _receipt(o, spec, results, run, False, strength)
+        names = ", ".join(sorted({a["tool_slug"] for a in held}))
+        receipt.update({"headline": "Awaiting approval", "status": "awaiting_approval", "note": None,
+                        "summary": (f"{len(held)} action{'s' if len(held) != 1 else ''} need{'' if len(held) != 1 else 's'} "
+                                    f"your approval before this job can finish: {names}. The checks run "
+                                    "again after you decide."),
+                        "held_actions": [{"id": a["id"], "tool_slug": a["tool_slug"], "category": a["category"],
+                                          "args": a["args"]} for a in held],
+                        "attempt_log": o["recovery"]})
+        await db.update_outcome(
+            outcome_id, status="awaiting_approval", finished_at=None, next_attempt_at=None,
+            needs_you_reason=None, receipt_json=json.dumps(receipt), cost_usd=cost,
+            manifest_json=json.dumps(manifest) if manifest else None)
+        if prev_status != "awaiting_approval":
+            escalate.fire(outcome_id, "approval", receipt["summary"])
+            agent = await db.get_agent(o["agent_id"])
+            try:
+                await db.add_notification(o["org_id"], o["agent_id"], run and run.get("id"),
+                                          f"Approve: {(agent or {}).get('name', 'routine')}",
+                                          receipt["summary"])
+            except Exception:  # noqa: BLE001
+                log.exception("could not add approval notification")
+        return await db.get_outcome(outcome_id)
     if waiting:
         # step 6: the automatic checks passed; an owner approves before anything is sent
         receipt = _receipt(o, spec, results, run, False, strength)
@@ -267,6 +295,7 @@ async def verify_outcome(outcome_id: int, attempt: Optional[int] = None,
             await deliver.deliver_outcome(outcome_id)
         except Exception:  # noqa: BLE001
             log.exception("delivery failed for outcome %s", outcome_id)
+            await db.release()
         return await db.get_outcome(outcome_id)
 
     receipt = _receipt(o, spec, results, run, False, strength)
@@ -517,6 +546,7 @@ async def recovery_loop() -> None:
     """Background loop: launch retries whose time has come. Survives restarts
     because the schedule lives in the database, not in memory."""
     while True:
+        await db.release()          # safety net: never let a failed write hold the lock
         try:
             for o in await db.due_recoveries():
                 try:
@@ -592,6 +622,23 @@ async def review(outcome_id: int, decision: str, note: Optional[str], reviewer: 
     if o["status"] != "awaiting_approval":
         raise ValueError("this outcome isn't waiting for a review")
     attempt = o["attempts"] or 1
+    held = await db.list_actions(outcome_id=outcome_id, status="held")
+    if held:
+        from . import gateway
+        if decision == "approve":
+            done = [await gateway.execute_approved(a["id"], reviewer) for a in held]
+            failed = [a for a in done if a["status"] != "executed"]
+            entry = {"attempt": attempt, "class": "user", "action": "approved", "at": now,
+                     "label": f"Approved by {reviewer}", "detail": (note or "")[:300]
+                     + (f" — {len(failed)} action(s) failed: " + "; ".join(
+                         f"{a['tool_slug']}: {a.get('error') or ''}"[:120] for a in failed) if failed else "")}
+            await db.update_outcome(outcome_id, recovery_json=json.dumps(o["recovery"] + [entry]),
+                                    reviewed_at=now, reviewed_by=reviewer, review_note=note or None,
+                                    review_verdict="ok")
+            # the actions ran: now verify for real (and recover if they didn't do the job)
+            return await verify_outcome(outcome_id, attempt=attempt)
+        for a in held:
+            await gateway.reject(a["id"], reviewer, note)
     if decision == "approve":
         entry = {"attempt": attempt, "class": "user", "label": f"Approved by {reviewer}",
                  "detail": note[:300], "action": "approved", "at": now}

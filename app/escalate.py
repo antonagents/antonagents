@@ -112,6 +112,7 @@ def fire(outcome_id: int, event: str, reason: str) -> None:
             await escalate(outcome_id, event, reason)
         except Exception:  # noqa: BLE001
             log.exception("escalation failed for outcome %s", outcome_id)
+            await db.release()
     asyncio.create_task(_run())
 
 

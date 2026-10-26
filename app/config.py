@@ -208,3 +208,9 @@ SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 SMTP_FROM = os.environ.get("SMTP_FROM", "") or SMTP_USER
 SMTP_TLS = os.environ.get("SMTP_TLS", "starttls")      # starttls | ssl | none
+
+
+# Action gateway (app/gateway.py): the internal listener task containers use for
+# connector calls. Host defaults to the task network's gateway address.
+GATEWAY_HOST = os.environ.get("SUPERAGENT_GATEWAY_HOST", "")
+GATEWAY_PORT = int(os.environ.get("SUPERAGENT_GATEWAY_PORT", "8090") or 8090)

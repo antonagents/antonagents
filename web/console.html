@@ -569,6 +569,27 @@
   .dod-preview{ white-space:pre-wrap; font-size:var(--fs-xs); background:var(--surface-2); border:1px solid var(--line);
     border-radius:var(--r-sm); padding:8px 10px; margin-top:6px; }
   .ny-panel{ border-left:3px solid var(--err); }
+  /* guardrails */
+  .gr-row{ display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:center; padding:10px 0;
+    border-bottom:1px solid var(--line); }
+  .gr-row b{ font-weight:600; font-size:var(--fs-base); text-transform:capitalize; }
+  .gr-row .dod-sum{ display:block; margin-top:2px; }
+  .gr-seg{ display:inline-flex; border:1px solid var(--line); border-radius:var(--r-pill); overflow:hidden; }
+  .gr-seg button{ background:none; border:0; border-radius:0; padding:5px 11px; font-size:var(--fs-xs);
+    color:var(--fg-2); font-weight:500; }
+  .gr-seg button + button{ border-left:1px solid var(--line); }
+  .gr-seg button.on.allow{ background:var(--ok-soft); color:var(--ok); }
+  .gr-seg button.on.approve{ background:var(--warn-soft); color:var(--warn); }
+  .gr-seg button.on.block{ background:var(--err-soft); color:var(--err); }
+  .gr-seg button:disabled{ opacity:.35; cursor:not-allowed; }
+  .gr-mod{ font-size:10px; color:var(--accent); margin-left:6px; text-transform:none; font-weight:500; }
+  .act-list{ display:flex; flex-direction:column; gap:6px; margin:6px 0; }
+  .act-item{ border:1px solid var(--line); border-radius:var(--r-sm); background:var(--surface); padding:8px 10px; }
+  .act-item code{ font-family:var(--font-mono); font-size:11.5px; font-weight:600; }
+  .act-item pre{ margin:6px 0 0; font-size:11px; max-height:180px; overflow:auto; white-space:pre-wrap;
+    background:var(--surface-2); border-radius:var(--r-sm); padding:6px 8px; }
+  .act-cat{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--warn); margin-left:6px; }
+  @media (max-width:640px){ .gr-row{ grid-template-columns:1fr; } }
   /* dropdowns keep a visible arrow (the shared input style strips the native one) */
   select.modal-input{ appearance:none; -webkit-appearance:none; padding-right:34px; cursor:pointer;
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8f98' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
@@ -1004,6 +1025,14 @@
     <div class="modal-head"><h2 id="dodTitle">Definition of done</h2><span class="count" id="dodFor"></span>
       <button class="ghost" style="margin-left:auto" onclick="closeDod()">Close</button></div>
     <div class="modal-body" id="dodBody"></div>
+  </div>
+</div>
+
+<div id="grModal" class="modal" onclick="if(event.target===this)closeGuardrails()">
+  <div class="modal-card" style="width:640px">
+    <div class="modal-head"><h2>Guardrails</h2><span class="count" id="grFor"></span>
+      <button class="ghost" style="margin-left:auto" onclick="closeGuardrails()">Close</button></div>
+    <div class="modal-body" id="grBody"></div>
   </div>
 </div>
 
@@ -2195,7 +2224,9 @@ function outcomeCard(t){
         <button class="sm" onclick="resolveOutcome(${o.id},'retry')">Retry</button>
         <button class="ghost sm" onclick="resolveOutcome(${o.id},'dismiss')">Dismiss</button></div></div>` : ''}
     ${o.status === 'recovering' && o.next_attempt_at ? `<div class="oc-note">Next attempt ${esc(_ocTime(o.next_attempt_at))}</div>` : ''}
-    ${o.status === 'awaiting_approval' ? _reviewBox(o.id, r.delivery_preview, 'approval') : ''}
+    ${o.status === 'awaiting_approval' ? _reviewBox(o.id, r.delivery_preview, 'approval', false, r.held_actions) : ''}
+    ${(o.actions||[]).length ? `<div class="oc-dl"><span class="oc-k">Actions</span>
+      ${o.actions.slice().reverse().map(a => `<span class="oc-dchip ${['executed','forwarded'].includes(a.status)?'ok':['failed','blocked','rejected'].includes(a.status)?'bad':''}" title="${esc(a.category+' · '+a.decision+(a.error?' · '+a.error:''))}">${({executed:'✓',forwarded:'→',held:'⏸',blocked:'⛔',rejected:'✗',failed:'✗',approved:'…'})[a.status]||''} ${esc(a.tool_slug)}</span>`).join('')}</div>` : ''}
     ${o.status === 'delivered' && o.review_requested_at && !o.reviewed_at ? _reviewBox(o.id, null, 'spot_check') : ''}
     ${(o.escalations||[]).length ? `<div class="oc-dl"><span class="oc-k">Told you via</span>
       ${o.escalations.map(e => `<span class="oc-dchip ${e.status==='sent'?'ok':e.status==='failed'?'bad':''}" title="${esc(e.last_error||e.event)}">${e.status==='sent'?'✓':e.status==='failed'?'✗':'…'} ${esc(e.target||e.kind)}</span>`).join('')}</div>` : ''}
@@ -2218,16 +2249,24 @@ function outcomeCard(t){
   </div>`;
 }
 // a person's verdict: approval gate (before delivery) or a sampled spot-check (after)
-function _reviewBox(oid, preview, kind, bare){
+function _heldList(held){
+  return held && held.length ? `<div class="act-list">${held.map(a => `<div class="act-item">
+      <code>${esc(a.tool_slug)}</code><span class="act-cat">${esc(a.category)}</span>
+      <details><summary class="dod-sum">exactly what will run</summary><pre>${esc(JSON.stringify(a.args, null, 2))}</pre></details></div>`).join('')}</div>` : '';
+}
+function _reviewBox(oid, preview, kind, bare, held){
   const appr = kind === 'approval';
+  const acts = held && held.length;
   return `<div class="oc-review${bare?' bare':''}">
-    ${bare ? '' : `<b>${appr ? 'Waiting for your approval' : 'Spot-check requested'}</b>
-    <span class="dod-sum">${appr ? 'The automatic checks passed. Nothing is sent until you approve.'
+    ${bare ? '' : `<b>${appr ? (acts ? 'The agent wants to do this — approve?' : 'Waiting for your approval') : 'Spot-check requested'}</b>
+    <span class="dod-sum">${appr ? (acts ? 'These actions were held by this routine\'s guardrails. Approving runs each one once, exactly as shown; then the job is checked.'
+      : 'The automatic checks passed. Nothing is sent until you approve.')
       : 'This outcome was delivered and picked at random for a person to check.'}</span>`}
+    ${_heldList(held)}
     ${preview ? `<details ${bare ? '' : 'open'}><summary>What will be delivered</summary><div class="dod-preview">${esc(preview)}</div></details>` : ''}
     <div class="ny-actions"><input type="text" class="modal-input" id="rvNote${oid}" maxlength="2000"
         placeholder="${appr ? 'Note, or what should change…' : 'What was wrong (optional)'}">
-      <button class="sm" onclick="reviewOutcome(${oid},'approve')">${appr ? 'Approve &amp; send' : 'Looks right'}</button>
+      <button class="sm" onclick="reviewOutcome(${oid},'approve')">${appr ? (acts ? 'Approve &amp; run' : 'Approve &amp; send') : 'Looks right'}</button>
       ${appr ? `<button class="ghost sm" onclick="reviewOutcome(${oid},'changes')">Request changes</button>` : ''}
       <button class="ghost sm" onclick="reviewOutcome(${oid},'reject')">${appr ? 'Reject' : 'Wrong'}</button></div></div>`;
 }
@@ -2244,6 +2283,74 @@ window.reviewOutcome = async (oid, decision) => {
   await loadLive();
   if (CURRENT_TASK_ID) openTask(CURRENT_TASK_ID);
 };
+window.decideAction = async (aid, decision) => {
+  const note = (($('#actNote'+aid)||{}).value||'').trim();
+  try {
+    const a = await api('/api/actions/'+aid+'/decide', {method:'POST', body:JSON.stringify({decision, note})});
+    toast(decision === 'reject' ? 'Rejected' : (a.status === 'executed' ? `${a.tool_slug} ran` : `${a.tool_slug} failed: ${a.error||''}`),
+          decision === 'approve' && a.status !== 'executed' ? 'err' : 'ok');
+  } catch(e){ toast(e.detail||e.message||'error','err'); }
+  await loadLive();
+};
+
+// ---- guardrails: what a routine may do through its connectors ----
+let GR = null;
+const _GR_LOCK = {code:'can only be allowed or blocked', admin:'can only be allowed or blocked'};
+window.openGuardrails = async (agentId) => {
+  try { GR = {agentId, ...(await api(`/api/agents/${agentId}/guardrails`))}; }
+  catch(e){ toast(e.detail||e.message||'error','err'); return; }
+  const t = await api('/api/agents/'+agentId).catch(() => ({}));
+  $('#grFor').textContent = t.name || '';
+  _grRender(); $('#grModal').style.display = 'flex';
+};
+window.closeGuardrails = () => { $('#grModal').style.display = 'none'; };
+function _grRender(){
+  const eff = GR.effective.categories, custom = (GR.custom||{}).categories || {}, tools = (GR.custom||{}).tools || {};
+  $('#grBody').innerHTML = `
+    <p class="dod-lead">Every connector action this agent asks for goes through the action gateway, which records it and applies these rules —
+      outside the agent's sandbox, so it can't work around them. Held actions wait in your inbox and run once, exactly as requested, if you approve.</p>
+    ${GR.gateway ? '' : '<div class="dod-warn top">⚠ The action gateway isn\'t running, so connectors are switched off for runs.</div>'}
+    ${Object.entries(GR.categories).map(([k, label]) => `<div class="gr-row">
+      <div><b>${esc(k)}</b>${custom[k] ? '<span class="gr-mod">changed</span>' : ''}<span class="dod-sum">${esc(label)}${_GR_LOCK[k] ? ' · '+_GR_LOCK[k] : ''}</span></div>
+      <div class="gr-seg">${['allow','approve','block'].map(d => `<button class="${d} ${eff[k]===d?'on':''}" ${_GR_LOCK[k] && d==='approve' ? 'disabled' : ''}
+        onclick="grSet('${k}','${d}')">${d === 'approve' ? 'ask me' : d}</button>`).join('')}</div></div>`).join('')}
+    <div class="dod-sec"><span class="fld-label">Rules for specific tools (override their category)</span>
+      <div class="oc-dl">${Object.entries(tools).map(([slug, d]) => `<span class="oc-dchip">${esc(slug)} → ${d === 'approve' ? 'ask me' : d}
+        <a href="#" onclick="grDelTool('${esc(slug)}');return false" aria-label="Remove">✕</a></span>`).join('') || '<span class="dod-sum">none</span>'}</div>
+      <div class="oc-cta" style="margin-top:8px"><input id="grSlug" class="modal-input" style="flex:1;min-width:200px" placeholder="TOOL_SLUG, e.g. GITHUB_CREATE_AN_ISSUE">
+        <select id="grSlugD" class="modal-input" style="width:auto"><option value="allow">allow</option><option value="approve">ask me</option><option value="block">block</option></select>
+        <button class="ghost sm" onclick="grAddTool()">Add</button></div></div>
+    <div class="modal-actions" style="margin-top:var(--sp-4)">
+      <button class="ghost" onclick="grReset()">Back to defaults</button>
+      <button onclick="grSave()">Save</button></div>
+    <div id="grOut" class="dod-out"></div>`;
+}
+window.grSet = (k, d) => {
+  GR.custom = GR.custom || {}; GR.custom.categories = GR.custom.categories || {};
+  if (GR.defaults[k] === d) delete GR.custom.categories[k]; else GR.custom.categories[k] = d;
+  GR.effective.categories[k] = d; _grRender();
+};
+window.grAddTool = () => {
+  const slug = $('#grSlug').value.trim().toUpperCase(), d = $('#grSlugD').value;
+  if (!/^[A-Z0-9_]{3,120}$/.test(slug)){ toast('Use a tool slug like SLACK_SEND_MESSAGE', 'err'); return; }
+  GR.custom = GR.custom || {}; GR.custom.tools = GR.custom.tools || {}; GR.custom.tools[slug] = d; _grRender();
+};
+window.grDelTool = (slug) => { delete GR.custom.tools[slug]; _grRender(); };
+window.grReset = () => { GR.custom = {}; GR.effective.categories = {...GR.defaults}; _grRender(); };
+window.grSave = async () => {
+  try {
+    const r = await api(`/api/agents/${GR.agentId}/guardrails`, {method:'PUT', body:JSON.stringify({
+      categories:(GR.custom||{}).categories||{}, tools:(GR.custom||{}).tools||{}})});
+    GR = {agentId:GR.agentId, ...r}; toast('Guardrails saved — they apply from the next run', 'ok');
+    closeGuardrails(); if (CURRENT_TASK_ID === GR.agentId) openTask(GR.agentId);
+  } catch(e){ $('#grOut').innerHTML = `<div class="dod-warn">${esc(e.detail||e.message||'error')}</div>`; }
+};
+function _grSummary(t){
+  const c = (t.guardrails || {}).categories; if (!c) return '';
+  const ask = Object.keys(c).filter(k => c[k] === 'approve'), no = Object.keys(c).filter(k => c[k] === 'block');
+  return [ask.length ? 'asks before: '+ask.join(', ') : '', no.length ? 'blocks: '+no.join(', ') : ''].filter(Boolean).join(' · ') || 'everything allowed';
+}
+
 window.redeliverOutcome = async (oid) => {
   try {
     const o = await api('/api/outcomes/'+oid+'/deliver', {method:'POST'});
@@ -2378,6 +2485,9 @@ function _dodRender(view){
         <input id="dodEscVal" type="text" class="modal-input" style="flex:1;min-width:160px" placeholder="#channel, address or URL">
         <button class="ghost sm" onclick="dodAddEsc()">Add</button>
         ${esc_ == null ? '' : '<a href="#" class="dod-sum" onclick="dodResetEsc();return false">use the default</a>'}</div></div>
+    ${DOD.agentId ? `<div class="dod-sec"><span class="fld-label">Guardrails</span>
+      <div class="dod-sum">What the agent may do through its connectors — messages, deletes and payments wait for you by default.
+        <a href="#" onclick="openGuardrails(${DOD.agentId});return false">Review guardrails</a></div></div>` : ''}
     <div class="dod-sec"><span class="fld-label">Budget</span>
       <div class="dod-grid">
         <label>Attempts <input id="dodAtt" type="number" min="1" max="5" class="modal-input" style="width:80px" value="${bud.max_attempts||3}"></label>
@@ -2626,11 +2736,18 @@ function renderNeedsYou(){
   const items = LIVE.needs_you || [];
   if (!items.length){ p.style.display = 'none'; return; }
   p.style.display = '';
-  $('#needsYouList').innerHTML = items.map(n => n.kind && n.kind !== 'escalation' ? `<div class="ny-item">
+  $('#needsYouList').innerHTML = items.map(n => n.kind && !['escalation','action'].includes(n.kind) ? `<div class="ny-item">
       <div><a href="#" class="ny-name" onclick="gotoRoutine(${n.agent_id});return false">${esc(n.name)}</a>
         <span class="dod-sum"> · ${n.kind==='approval' ? 'awaiting your approval' : 'spot-check'} · ${esc(_ocTime(n.at))}</span></div>
       <div class="ny-reason">${esc(n.reason || '')}${(n.checks||[]).length ? ' '+n.checks.map(c => (c.passed?'✓ ':'✗ ')+esc(c.name)).join(' · ') : ''}</div>
-      ${_reviewBox(n.outcome_id, n.preview, n.kind, true)}
+      ${_reviewBox(n.outcome_id, n.preview, n.kind, true, n.held_actions)}
+    </div>` : n.kind === 'action' ? `<div class="ny-item">
+      <div><a href="#" class="ny-name" onclick="gotoRoutine(${n.agent_id});return false">${esc(n.name)}</a>
+        <span class="dod-sum"> · wants to run an action · ${esc(_ocTime(n.at))}</span></div>
+      ${_heldList([n])}
+      <div class="ny-actions"><input type="text" class="modal-input" id="actNote${n.action_id}" placeholder="Note (optional)" maxlength="1000">
+        <button class="sm" onclick="decideAction(${n.action_id},'approve')">Approve &amp; run</button>
+        <button class="ghost sm" onclick="decideAction(${n.action_id},'reject')">Reject</button></div>
     </div>` : `<div class="ny-item">
       <div><a href="#" class="ny-name" onclick="gotoRoutine(${n.agent_id});return false">${esc(n.name)}</a>
         <span class="dod-sum"> · ${esc(_NY_CLASS[n.class] || n.class || 'stopped')} · ${n.attempts||0} attempt${n.attempts===1?'':'s'} · ${esc(_ocTime(n.at))}</span></div>
@@ -2790,6 +2907,7 @@ async function openTask(id){
       <div class="m">routine · ${sched}${nextRun} · max ${t.timeout_secs?Math.round(t.timeout_secs/60):60}m · ${toggle}<a href="#" onclick="editRoutine(${id});return false">edit</a></div>
       <div class="m">impact · ${t.impact?t.impact.runs_succeeded:0}/${t.impact?t.impact.runs:0} done · ${t.impact?t.impact.minutes_saved:0} min saved · ${_usd(t.impact?t.impact.cost_saved_usd:0)} value · ${_usd(t.impact?t.impact.spend_usd:0)} spent</div>
       <div class="m">alerts · ${(t.alerts||[]).filter(a=>a.enabled).map(a=>esc(alertLabel(a))).join(', ')||'none'} · <a href="#" onclick="editAlerts(${id});return false">edit</a></div>
+      <div class="m">guardrails · ${esc(_grSummary(t))} · <a href="#" onclick="openGuardrails(${id});return false">edit</a></div>
       <div class="m">runs · ${runs.map(r=>`<a href="#" onclick="watchRunId(${r.id});return false">#${r.id} ${r.status}</a>`).join('  ')||'none'}</div>
     </details>
   </div>`;
