@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git curl ca-certificates jq \
         postgresql-client default-mysql-client sqlite3 \
         build-essential \
+        poppler-utils tesseract-ocr tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Claude Code CLI (the Agent SDK drives this binary) ---
@@ -17,7 +18,8 @@ RUN npm install -g @anthropic-ai/claude-code
 
 # --- anydoc: convert uploaded documents (PDF/Word/PPT/Excel/ODF/RTF/EPUB) to
 #     clean Markdown, in-sandbox (MIT, pure-Rust, no ML, no external service).
-#     Text-based extraction only — scanned/image PDFs need OCR (not bundled). ---
+#     Text-based extraction only — scanned/image PDFs use OCR (tesseract, below) or a
+#     vision-capable model reading the page images (pdftoppm, from poppler-utils). ---
 RUN npm install -g @firecrawl/anydoc
 
 # --- Python deps: the Agent SDK + libs tasks commonly use ---
@@ -25,7 +27,8 @@ RUN npm install -g @firecrawl/anydoc
 RUN python3 -m pip install --no-cache-dir --break-system-packages \
         claude-agent-sdk \
         psycopg2-binary pymysql pymongo sqlalchemy \
-        pandas numpy requests ddgs
+        pandas numpy requests ddgs \
+        pdfplumber openpyxl pillow pytesseract
 
 # --- provider-agnostic web search (built-in WebSearch only works on Anthropic) ---
 COPY websearch /usr/local/bin/websearch

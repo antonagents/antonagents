@@ -107,6 +107,9 @@ async def run(spec: dict) -> int:
         system_prompt=spec.get("system_prompt") or DEFAULT_SYSTEM,
         permission_mode=spec.get("permission_mode") or "bypassPermissions",
         cwd=spec.get("cwd") or "/workspace",
+        # one message can carry an image or a PDF page (Read on a scan); the SDK's 1 MB
+        # default made such runs crash with "JSON message exceeded maximum buffer size"
+        max_buffer_size=int(os.environ.get("SA_MAX_BUFFER_MB", "32")) * 1024 * 1024,
     )
     if spec.get("model"):
         opt_kwargs["model"] = spec["model"]

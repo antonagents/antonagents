@@ -40,6 +40,11 @@ class Provider:
     # USD per million tokens, by model ("*" = any): {"input","output","cache_read","cache_write"}.
     # Used by app/metering.py for real per-run cost; unset → the SDK's estimate.
     pricing: dict = field(default_factory=dict)
+    # can the model see images / PDF pages? True, False, or a list of models that can
+    vision: object = False
+    # extra request headers taken from server env, e.g. {"anthropic-workspace-id":
+    # "ANTHROPIC_WORKSPACE_ID"} — sent only when that env var is set
+    headers_env: dict = field(default_factory=dict)
 
 
 _BUILTINS: list[Provider] = [
@@ -110,7 +115,20 @@ def container_env(provider: str, model: str) -> dict[str, str]:
     if p.base_url:
         env["ANTHROPIC_BASE_URL"] = p.base_url
     env.update(p.extra_env)
+    headers = extra_headers(p)
+    if headers:   # Claude Code sends these with every model request
+        env["ANTHROPIC_CUSTOM_HEADERS"] = "\n".join(f"{k}: {v}" for k, v in headers.items())
     return env
+
+
+def extra_headers(p: "Provider") -> dict[str, str]:
+    return {h: os.environ[e] for h, e in (p.headers_env or {}).items() if os.environ.get(e)}
+
+
+def supports_vision(provider: Optional[str], model: Optional[str]) -> bool:
+    p = get(provider or "")
+    v = getattr(p, "vision", False) if p else False
+    return bool(v) if not isinstance(v, list) else (model in v)
 
 
 def to_public() -> list[dict]:

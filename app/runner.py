@@ -275,11 +275,27 @@ _UPLOADS_NOTE = (
     "incrementally: check size first (`wc -l`/`wc -c`), read the top with `head`, "
     "`grep` for what you need, and for a long document summarize it section by "
     "section rather than reading it all at once.\n"
+    "{SCANS}"
+    "- Tables in digital PDFs: pdfplumber (Python) keeps rows and columns; write "
+    "spreadsheets with openpyxl.\n"
     "- CSV / tabular data: use pandas (read, aggregate, filter) — don't print huge "
     "tables into context.\n"
     "- Plain text / code: read directly, but for large files read in ranges rather "
     "than the whole thing."
 )
+
+
+_SCANS_VISION = (
+    "- SCANNED PDFs / IMAGES (anydoc gives little or no text): your model can see images — "
+    "open the file with your Read tool (for long PDFs pass `pages`, e.g. \"1-3\") and read it "
+    "directly. For many pages or poor scans, OCR in the sandbox is also available: "
+    "`pdftoppm -r 300 -png in.pdf /tmp/p` then `tesseract /tmp/p-1.png /tmp/p-1`.\n")
+_SCANS_TEXT_ONLY = (
+    "- SCANNED PDFs / IMAGES (anydoc gives little or no text): your model CANNOT see images — "
+    "never open image files or scanned pages with the Read tool (it fails the run). OCR them "
+    "in the sandbox instead: `pdftoppm -r 300 -png ./uploads/scan.pdf /tmp/scan` then "
+    "`tesseract /tmp/scan-1.png /tmp/scan-1` and read /tmp/scan-1.txt. Treat OCR'd numbers "
+    "with care: cross-check totals (net + tax = total) and say when a value is unclear.\n")
 
 
 def _build_spec(agent: dict, model: str, *, prompt: str, resume: Optional[str],
@@ -290,7 +306,8 @@ def _build_spec(agent: dict, model: str, *, prompt: str, resume: Optional[str],
     notes = [db_note, search_note, guard_note, _ARTIFACTS_NOTE]
     # Uploads work for chats and (interactive) routines alike — inject the note for
     # both. It's inert on a scheduled routine run (no files uploaded then).
-    notes.append(_UPLOADS_NOTE)
+    vision = providers.supports_vision(agent.get("_route_provider"), model)
+    notes.append(_UPLOADS_NOTE.replace("{SCANS}", _SCANS_VISION if vision else _SCANS_TEXT_ONLY))
     if agent.get("kind") == "chat":
         notes.append(_SCHEDULING_NOTE)
     for note in notes:
@@ -411,6 +428,7 @@ async def execute_run(run_id: int, agent: dict) -> None:
 
         await handle({"type": "routed", "provider": provider_name, "model": model})
         route.update(provider=provider_name, model=model)
+        agent = {**agent, "_route_provider": provider_name}   # for model-specific notes
         await db.set_run_route(run_id, provider_name, model)
 
         # provision ONLY the connectors this agent selected, intersected with the

@@ -38,6 +38,7 @@ async def complete(system: str, user: str, *, max_tokens: int = 4000,
         base = (p.base_url or "https://api.anthropic.com").rstrip("/")
         tok = os.environ.get(p.auth_env, "")
         headers = {"anthropic-version": "2023-06-01", "content-type": "application/json"}
+        headers.update(providers.extra_headers(p))
         if p.token_target == "ANTHROPIC_API_KEY":
             headers["x-api-key"] = tok
         else:
