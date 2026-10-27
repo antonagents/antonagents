@@ -1333,6 +1333,12 @@ async def create_job(body: JobCreateIn, user: dict = Depends(current_user)):
         await asyncio.to_thread(escalate.normalize, body.spec.escalate_to)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    if body.provider:
+        prov = providers.get(body.provider)
+        if not prov or not providers.is_configured(prov):
+            raise HTTPException(400, f"model provider '{body.provider}' isn't available")
+        if body.model and body.model not in prov.models and not getattr(prov, "dynamic_models", False):
+            raise HTTPException(400, f"'{body.model}' isn't one of {prov.label}'s models")
     valid_conn = {p["slug"] for p in connectors.get_connector().providers()}
     owned_dbs = {c["id"] for c in await db.list_org_db_connections(org)}
     if any(i not in owned_dbs for i in body.db_connection_ids):
@@ -1341,7 +1347,8 @@ async def create_job(body: JobCreateIn, user: dict = Depends(current_user)):
     agent_id = await db.create_agent(
         {"name": body.name.strip(), "prompt": body.prompt.strip(), "schedule_kind": body.schedule_kind,
          "schedule_expr": body.schedule_expr if body.schedule_kind != "once" else None,
-         "baseline_minutes": body.baseline_minutes}, org_id=org, owner_id=user["id"])
+         "baseline_minutes": body.baseline_minutes, "provider": body.provider, "model": body.model},
+        org_id=org, owner_id=user["id"])
     live = body.mode == "live"
     if not live:
         await db.set_agent_enabled(agent_id, False)      # paused until it goes live

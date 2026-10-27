@@ -23,8 +23,9 @@ from typing import Optional
 from . import config, db
 from .connectors import db_driver
 
-SUPPORTED_KINDS = {"sql", "artifact", "judge", "human"}
-STRENGTH = {"sql": "verified", "artifact": "verified", "judge": "judged", "human": "accepted"}
+SUPPORTED_KINDS = {"sql", "artifact", "table", "judge", "human"}
+STRENGTH = {"sql": "verified", "artifact": "verified", "table": "verified", "judge": "judged",
+            "human": "accepted"}
 JUDGE_SOURCES = {"outbox", "result", "file"}
 _JUDGE_CAP = 60000
 
@@ -229,6 +230,35 @@ async def _check_artifact(cfg: dict, ctx: dict) -> dict:
             "detail": path + (f" — {', '.join(fails)}" if fails else "")}
 
 
+# ---------------- table (a CSV register the agent wrote) ----------------
+
+async def _list_dir(agent_id: int, rel: str) -> list[str]:
+    from . import runner
+    inner = 'cd "/ws/$D" 2>/dev/null && find . -maxdepth 1 -type f ! -name ".*" -printf "%P\\n" | sort'
+    cmd = ["docker", "run", "--rm", "--network", "none", "--memory", "128m",
+           "-v", f"{runner.agent_volume(agent_id)}:/ws:ro", "-e", "D", "alpine", "sh", "-c", inner]
+    code, out, _ = await run_container(cmd, {"D": rel}, timeout=30)
+    return [ln for ln in out.splitlines() if ln.strip()] if code == 0 else []
+
+
+async def _check_table(cfg: dict, ctx: dict) -> dict:
+    from . import runner, tablecheck
+    path = safe_rel_path(render(cfg.get("path", ""), ctx))
+    if not path:
+        return {"passed": False, "detail": "path must be relative to the workspace"}
+    raw = await runner.read_artifact(ctx["agent_id"], f"/ws/{path}")
+    if raw is None:
+        return {"passed": False, "observed": "missing", "expected": f"{path} exists", "detail": path}
+    files = None
+    cover = cfg.get("covers_files")
+    if cover:
+        files = await _list_dir(ctx["agent_id"], safe_rel_path(render(cover.get("dir", ""), ctx)) or "")
+    try:
+        return tablecheck.check(raw.decode("utf-8", errors="replace"), cfg, files)
+    except tablecheck.RuleError as e:
+        return {"passed": False, "detail": f"rule error: {e}"}
+
+
 # ---------------- judge ----------------
 
 _JUDGE_SYSTEM = """You are an independent reviewer checking whether an AI agent's output meets
@@ -341,7 +371,7 @@ async def _check_human(cfg: dict, ctx: dict) -> dict:
             "detail": "", "pending_human": True}
 
 
-_RUNNERS = {"sql": _check_sql, "artifact": _check_artifact, "judge": _check_judge,
+_RUNNERS = {"sql": _check_sql, "artifact": _check_artifact, "table": _check_table, "judge": _check_judge,
             "human": _check_human}
 
 
@@ -418,6 +448,41 @@ async def validate_check(c: dict, org_id: int) -> dict:
                 raise ValueError(f"{label}: path must be relative to the workspace")
             cfg2["path"] = p
         cfg = cfg2
+    elif kind == "table":
+        from . import tablecheck
+        path = safe_rel_path(cfg.get("path", ""))
+        if not path:
+            raise ValueError(f"{label}: path must be relative to the workspace")
+        out = {"path": path}
+        for k in ("columns", "unique"):
+            v = cfg.get(k) or []
+            if not isinstance(v, list) or not all(isinstance(x, str) and x.strip() for x in v):
+                raise ValueError(f"{label}: {k} must be a list of column names")
+            if v:
+                out[k] = [x.strip() for x in v]
+        for k in ("row_rule", "where"):
+            if cfg.get(k):
+                try:
+                    tablecheck.parse_rule(str(cfg[k]))
+                except tablecheck.RuleError as e:
+                    raise ValueError(f"{label}: {k}: {e}")
+                out[k] = str(cfg[k]).strip()
+        if cfg.get("min_rows") is not None:
+            try:
+                out["min_rows"] = max(0, int(cfg["min_rows"]))
+            except (TypeError, ValueError):
+                raise ValueError(f"{label}: min_rows must be a number")
+        cov = cfg.get("covers_files")
+        if cov:
+            d = safe_rel_path((cov or {}).get("dir", ""))
+            if not d or not (cov or {}).get("column"):
+                raise ValueError(f"{label}: covers_files needs a workspace 'dir' and a 'column'")
+            out["covers_files"] = {"dir": d, "column": str(cov["column"]).strip()}
+            if cov.get("pattern"):
+                out["covers_files"]["pattern"] = str(cov["pattern"]).strip()[:40]
+        if len(out) == 1:
+            raise ValueError(f"{label}: a table check needs at least one rule")
+        cfg = out
     elif kind == "human":
         mode = cfg.get("mode") or "approve"
         if mode not in ("approve", "sample"):

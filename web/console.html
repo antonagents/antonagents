@@ -2378,8 +2378,11 @@ const _DOD_TPL = {
         config:{rubric:['Names every item that changed, with before and after values',
                         'Says what the reader should do next'], source:'outbox', threshold:0.8}},
   human: {kind:'human', name:'Owner approves before sending', required:true, config:{mode:'approve'}},
+  table: {kind:'table', name:'Register adds up', required:true,
+        config:{path:'output/register.csv', columns:['invoice_number','net','gst','total'], unique:['invoice_number'],
+                row_rule:'net + gst == total', where:"status == 'ok'", covers_files:{dir:'uploads/inbox', column:'source_file'}}},
 };
-const _DOD_KIND = {sql:'SQL', artifact:'file', judge:'judge', human:'person'};
+const _DOD_KIND = {sql:'SQL', artifact:'file', table:'table', judge:'judge', human:'person'};
 let DS_NAMES = {};
 function esc_ds(id){ return DS_NAMES[id] ? `data source ${DS_NAMES[id]}` : `data source #${id ?? '?'}`; }
 async function _dsNames(){ try { (await api('/api/db-connections')).forEach(x => DS_NAMES[x.id] = x.name); } catch(e){} }
@@ -2387,6 +2390,8 @@ function _dodCheckSummary(c){
   const k = c.config || {};
   if (c.kind === 'judge') return `${(k.rubric||[]).length} criteria · reads ${({outbox:'the delivery message', result:"the agent's final answer", file:k.path||'a file'})[k.source||'outbox']} · pass at ${k.threshold ?? 0.8} · shown as JUDGED`;
   if (c.kind === 'human') return k.mode === 'sample' ? `spot-check ${Math.round((k.rate??0.2)*100)}% of delivered outcomes · doesn't block delivery` : 'nothing is delivered until an owner approves · shown as ACCEPTED';
+  if (c.kind === 'table') return [k.path, k.unique ? 'unique '+k.unique.join('+') : '', k.row_rule ? 'rule: '+k.row_rule+(k.where?' where '+k.where:'') : '',
+    k.covers_files ? 'every file in '+k.covers_files.dir+' listed' : ''].filter(Boolean).join(' · ');
   if (c.kind === 'sql') return `${k.expect ? 'expects '+k.expect : 'no expectation'} · ${esc_ds(k.connection_id)}`;
   const bits = ['non_empty','modified_since_start','ts_after_start'].filter(x => k[x]).map(x => x.replace(/_/g,' '));
   if (k.contains) bits.push(`contains "${k.contains}"`);
@@ -2466,6 +2471,7 @@ function _dodRender(view){
       <div id="dodChecks">${checks}</div>
       <div class="oc-cta" style="margin-top:8px"><button class="ghost sm" onclick="dodAddCheck('sql')">+ SQL check</button>
         <button class="ghost sm" onclick="dodAddCheck('artifact')">+ File check</button>
+        <button class="ghost sm" onclick="dodAddCheck('table')" title="Rules over a CSV the agent writes: unique keys, row arithmetic, every input file listed">+ Table</button>
         <button class="ghost sm" onclick="dodAddCheck('judge')" title="A separate model scores the output against criteria — for what a query or file can't prove">+ Judge</button>
         <button class="ghost sm" onclick="dodAddCheck('human')" title="An owner approves before delivery, or spot-checks a sample">+ Person</button></div></div>
     <div class="dod-sec"><span class="fld-label">Deliver to — sent once, only after the checks pass</span>
@@ -2523,6 +2529,7 @@ function _dodSync(){
     if (w === 'once'){ j.schedule_kind = 'once'; j.schedule_expr = null; }
     else { j.schedule_kind = 'cron'; j.schedule_expr = w === '__cron' ? $('#jobCron').value.trim() : w; }
     j.connectors = [...document.querySelectorAll('.job-conn:checked')].map(x => x.value);
+    const mv = ($('#jobModel')||{}).value || ''; [j.provider, j.model] = mv ? mv.split('|') : [null, null];
     j.db_connection_ids = [...document.querySelectorAll('.job-db:checked')].map(x => +x.value);
   }
   const att = parseInt($('#dodAtt').value, 10), cost = parseFloat($('#dodCost').value);
@@ -2566,6 +2573,12 @@ function _jobFieldsHtml(){
         ${_JOB_WHEN.map(w => `<option value="${w[0]}" ${w[0]===preset?'selected':''}>${w[1]}</option>`).join('')}</select>
         <span id="jobCronWrap" style="${preset==='__cron'?'':'display:none'}"><input id="jobCron" class="modal-input" style="width:140px" value="${esc(j.schedule_expr||'0 9 * * *')}" placeholder="min hr dom mon dow"></span>
         <span class="dod-sum">${esc(j.schedule_human||'')}${cx.timezone ? ' · times are '+esc(cx.timezone) : ''}</span></div></div>
+    <div class="dod-sec"><label class="fld-label" for="jobModel">Model</label>
+      <select id="jobModel" class="modal-input" style="width:auto">
+        <option value="">Default (${esc(cx.defaultLabel||'routed automatically')})</option>
+        ${(cx.providers||[]).filter(p => p.configured).map(p => p.models.map(m =>
+          `<option value="${esc(p.name)}|${esc(m)}" ${j.provider===p.name && j.model===m ? 'selected' : ''}>${esc(p.label)} · ${esc(m)}${(p.vision===true || (Array.isArray(p.vision) && p.vision.includes(m))) ? ' — reads images & scans' : ''}</option>`).join('')).join('')}
+      </select></div>
     <div class="dod-sec"><span class="fld-label">Uses</span>
       <div class="dod-grid">
         ${conns.map(c => `<label><input type="checkbox" class="job-conn" value="${esc(c)}" ${(j.connectors||[]).includes(c)?'checked':''}> ${esc(c)}</label>`).join('')}
@@ -2592,11 +2605,12 @@ window.jobPlan = async () => {
   const btn = $('#dodDraftBtn'); if (btn){ btn.disabled = true; btn.textContent = 'Planning…'; }
   $('#dodOut').innerHTML = `<div class="dod-note">Reading your connected apps, data sources${DOD.fromChat?', and this conversation':''}… this takes up to a minute.</div>`;
   try {
-    const [r, dbs] = await Promise.all([
+    const [r, dbs, provs] = await Promise.all([
       api('/api/jobs/plan', {method:'POST', body:JSON.stringify({description:desc, from_chat_id:DOD.fromChat})}),
-      api('/api/db-connections').catch(() => [])]);
+      api('/api/db-connections').catch(() => []), api('/api/providers').catch(() => [])]);
     DOD.job = r.job; DOD.draft = r.draft; DOD.warnings = r.warnings || [];
     DOD.jobCtx = {connectors:(r.context||{}).connectors||[], timezone:(r.context||{}).timezone,
+                  providers:Array.isArray(provs) ? provs : (provs.providers||[]),
                   dbs:(dbs||[]).map(x => ({id:x.id, name:x.name}))};
     DOD.notes = r.notes || '';
     $('#dodFor').textContent = r.job.name;
@@ -2614,6 +2628,7 @@ window.jobCreate = async (mode) => {
   if (!d.checks.length){ toast('Add at least one check — it is how the job proves it was done', 'err'); return; }
   const body = {name:j.name, prompt:j.prompt, schedule_kind:j.schedule_kind, schedule_expr:j.schedule_expr,
                 connectors:j.connectors||[], db_connection_ids:j.db_connection_ids||[],
+                provider:j.provider||null, model:j.model||null,
                 spec:_dodBody(false), mode, from_chat_id:DOD.fromChat};
   $('#dodOut').innerHTML = '<div class="dod-note">Creating the job…</div>';
   try {

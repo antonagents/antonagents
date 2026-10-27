@@ -137,7 +137,7 @@ def to_public() -> list[dict]:
         {
             "name": p.name, "label": p.label,
             "models": p.models, "default_model": p.default_model,
-            "configured": is_configured(p),
+            "configured": is_configured(p), "vision": p.vision,
         }
         for p in _registry.values()
     ]

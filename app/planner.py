@@ -219,6 +219,11 @@ job really happened. Prefer deterministic kinds:
 2. {"kind":"artifact","name":"...","config":{"path":"the relative path your instructions
     tell the agent to write","non_empty":true,"modified_since_start":true,
     "contains":"optional text"},"required":true}
+   For registers/ledgers the agent writes, ALSO have it write a CSV and check it with:
+   {"kind":"table","name":"...","config":{"path":"output/register.csv","columns":["..."],
+    "unique":["invoice_number"],"row_rule":"net + gst == total","where":"status == 'ok'",
+    "covers_files":{"dir":"uploads/inbox","column":"source_file","pattern":"*.pdf"}},"required":true}
+   (row_rule/where: column names, numbers, + - * /, comparisons; equality within 0.01)
 3. {"kind":"judge","name":"...","config":{"rubric":["concrete criterion answerable from the
     text, quotable as evidence", ...1-6],"source":"file"|"outbox"|"result",
     "path":"for file","threshold":0.8},"required":true}  — only for qualitative content.
@@ -248,6 +253,10 @@ async def gather_job_context(org_id: int, owner_id: int, chat: Optional[dict] = 
     except Exception:  # noqa: BLE001
         known = {}
     ctx = {"server_timezone": _server_tz(),
+           "sandbox_tools": ("Linux + Python 3 + shell; anydoc (PDF/Word/Excel → Markdown); poppler "
+                             "(pdftotext, pdftoppm); tesseract OCR; pdfplumber, openpyxl, pandas, pillow, "
+                             "pytesseract; psql/mysql/sqlite clients; web search. Files the user uploads "
+                             "land in uploads/."),
            "connectors_connected": sorted(active),
            "connectors_available_not_connected": sorted(set(known) - set(active)),
            "data_sources": sources,

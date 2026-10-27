@@ -162,13 +162,14 @@ def compose(o: dict, agent: dict, message: Optional[str]) -> dict:
     checks = r.get("checks") or []
     passed = sum(1 for c in checks if c.get("passed"))
     footer = (f"✓ {r.get('headline') or 'Delivered'} · {passed}/{len(checks)} checks passed · "
-              f"attempt {o.get('attempts') or 1} · verified {(o.get('verified_at') or '')[:16].replace('T', ' ')} UTC")
+              f"attempt {o.get('attempts') or 1} · verified {(o.get('verified_at') or '')[:16].replace('T', ' ')} UTC"
+              if checks else "")   # a preview (dry run / awaiting approval) has no results yet
     title = f"{name}: {r.get('headline') or 'Delivered'}"
-    text = f"*{name}*\n\n{message}\n\n_{footer}_"
+    text = f"*{name}*\n\n{message}" + (f"\n\n_{footer}_" if footer else "")
     payload = {"agent": name, "outcome_id": o["id"], "status": o.get("status"),
                "headline": r.get("headline"), "summary": r.get("summary"), "message": message,
                "checks": checks, "attempts": o.get("attempts"), "verified_at": o.get("verified_at")}
-    return {"title": title, "text": text, "plain": f"{message}\n\n{footer}", "payload": payload}
+    return {"title": title, "text": text, "plain": message + (f"\n\n{footer}" if footer else ""), "payload": payload}
 
 
 # ---------------- senders ----------------

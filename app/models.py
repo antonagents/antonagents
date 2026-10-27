@@ -148,7 +148,7 @@ class AgentDbConnectionsIn(BaseModel):
 # ---------------- outcome jobs (docs/features/outcome-jobs.md) ----------------
 
 class JobCheckIn(BaseModel):
-    kind: Literal["sql", "artifact", "judge", "human"]
+    kind: Literal["sql", "artifact", "table", "judge", "human"]
     name: str = Field(..., min_length=1, max_length=200)
     config: dict = Field(default_factory=dict)
     required: bool = True
@@ -208,6 +208,8 @@ class JobCreateIn(BaseModel):
     spec: JobSpecIn
     mode: Literal["live", "dry_run", "draft"] = "dry_run"
     from_chat_id: Optional[int] = None     # copy that chat's workspace files
+    provider: Optional[str] = None         # pin a model (e.g. a vision model for scans)
+    model: Optional[str] = None
     baseline_minutes: Optional[int] = Field(None, ge=0, le=100000)
 
 
