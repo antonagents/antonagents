@@ -191,7 +191,8 @@ and data sources listed in the context. Return ONLY one JSON object:
 {
  "name": "short name for the job (max 60 chars)",
  "instructions": "what the agent does EVERY time it runs — specific, step by step, naming the
-   data sources/tables, files it writes (relative paths, e.g. output/report.md), and the
+   data sources/tables, files it writes (relative paths; files for people — reports, spreadsheets,
+   registers — go in artifacts/, e.g. artifacts/report.md, so the user can open them), and the
    format of results. Writes to databases must be idempotent (upsert on a natural key,
    never delete). Do not tell it to post/email results itself — delivery is done for it.",
  "schedule": {"kind": "once" | "cron", "expr": "5-field crontab or null",

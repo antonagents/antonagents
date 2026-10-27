@@ -51,6 +51,16 @@ def agent_volume(agent_id: int) -> str:
     return f"superagent-agent-{agent_id}-ws"
 
 
+def dryrun_volume(agent_id: int) -> str:
+    """A dry run works on a copy of the workspace, so it never changes the real one
+    (a "process new invoices" job would otherwise consume the batch it rehearsed on)."""
+    return f"superagent-agent-{agent_id}-dryrun"
+
+
+def volume_for(agent_id: int, dry_run: bool = False) -> str:
+    return dryrun_volume(agent_id) if dry_run else agent_volume(agent_id)
+
+
 async def test_db_connection(engine: str, dsn: str, mode: str) -> dict:
     """Check a data source is reachable, in the SAME task container the agent uses
     (so a pass means the agent will connect too). Runs a trivial query with the
@@ -113,19 +123,20 @@ async def test_db_connection(engine: str, dsn: str, mode: str) -> dict:
 # find under /ws/artifacts: prune scratch dirs, skip dot paths, print
 # "<relpath>\t<size>\t<mtime-epoch>" per file.
 _ARTIFACT_LIST_SCRIPT = (
-    "cd /ws/artifacts 2>/dev/null || exit 0; "
+    # deliverables live in artifacts/ (paths as-is) and, for many jobs, output/ (prefixed)
+    "for d in artifacts output; do [ -d /ws/$d ] || continue; cd /ws/$d; "
     "find . -name .git -prune -o -name node_modules -prune -o "
     "-name __pycache__ -prune -o -name .cache -prune -o -name .npm -prune -o "
-    '-type f ! -path "*/.*" -printf "%P\\t%s\\t%T@\\n"'
+    '-type f ! -path "*/.*" -printf "$d|%P\\t%s\\t%T@\\n"; done'
 )
 
 
-async def _volume_exists(agent_id: int) -> bool:
+async def _volume_exists(agent_id: int, volume: Optional[str] = None) -> bool:
     """True if the agent's workspace volume exists (i.e. it has ever run). Uses a
     daemon metadata query, so it works on every platform (no host path)."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "docker", "volume", "inspect", agent_volume(agent_id),
+            "docker", "volume", "inspect", volume or agent_volume(agent_id),
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
         )
         await proc.wait()
@@ -134,16 +145,16 @@ async def _volume_exists(agent_id: int) -> bool:
         return False
 
 
-async def list_artifacts(agent_id: int) -> Optional[list[dict]]:
+async def list_artifacts(agent_id: int, volume: Optional[str] = None) -> Optional[list[dict]]:
     """List files under the agent's <workspace>/artifacts, read via a throwaway
     container. Returns [{"path", "size", "mtime"}] (unsorted), [] if the agent has
     a volume but no artifacts, or None if it has no workspace volume yet."""
-    if not await _volume_exists(agent_id):
+    if not await _volume_exists(agent_id, volume):
         return None
     try:
         proc = await asyncio.create_subprocess_exec(
             "docker", "run", "--rm", "--network", "none",
-            "-v", f"{agent_volume(agent_id)}:/ws:ro",
+            "-v", f"{volume or agent_volume(agent_id)}:/ws:ro",
             "--entrypoint", "sh", config.TASK_IMAGE, "-c", _ARTIFACT_LIST_SCRIPT,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
         )
@@ -156,24 +167,28 @@ async def list_artifacts(agent_id: int) -> Optional[list[dict]]:
         if len(parts) != 3:
             continue
         path, size, mtime = parts
+        where, _, rel = path.partition("|")
+        # artifacts/ files keep their bare path (served with dir=artifacts); output/
+        # files are workspace paths (served with dir=workspace)
+        path, serve = (rel, "artifacts") if where == "artifacts" else (f"{where}/{rel}", "workspace")
         try:
-            rows.append({"path": path, "size": int(size), "mtime": float(mtime)})
+            rows.append({"path": path, "dir": serve, "size": int(size), "mtime": float(mtime)})
         except ValueError:
             continue
     return rows
 
 
-async def read_artifact(agent_id: int, ws_path: str) -> Optional[bytes]:
+async def read_artifact(agent_id: int, ws_path: str, volume: Optional[str] = None) -> Optional[bytes]:
     """Read one file from the agent's workspace volume via a throwaway container.
     `ws_path` is an absolute path under /ws (already traversal-validated by the
     caller). Returns the file bytes, or None if the volume/file doesn't exist.
     Reads the file fully into memory — fine for deliverables."""
-    if not await _volume_exists(agent_id):
+    if not await _volume_exists(agent_id, volume):
         return None
     try:
         proc = await asyncio.create_subprocess_exec(
             "docker", "run", "--rm", "--network", "none",
-            "-v", f"{agent_volume(agent_id)}:/ws:ro",
+            "-v", f"{volume or agent_volume(agent_id)}:/ws:ro",
             "--entrypoint", "sh", config.TASK_IMAGE,
             "-c", '[ -f "$1" ] && cat -- "$1" || exit 44', "sa", ws_path,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
@@ -186,15 +201,17 @@ async def read_artifact(agent_id: int, ws_path: str) -> Optional[bytes]:
     return out
 
 
-async def copy_workspace(src_agent_id: int, dst_agent_id: int) -> bool:
-    """Copy one agent's workspace into another's ("save a chat as a job"), minus the
-    SDK session state. Runs as the image's agent user so the new volume is writable."""
-    if not await _volume_exists(src_agent_id):
+async def copy_workspace(src_agent_id: int, dst_agent_id: int, *,
+                         src_volume: Optional[str] = None, dst_volume: Optional[str] = None) -> bool:
+    """Copy one workspace into another ("save a chat as a job", dry-run copies),
+    minus the SDK session state. Runs as the image's agent user so the destination
+    volume is writable."""
+    if not await _volume_exists(src_agent_id, src_volume):
         return False
     proc = await asyncio.create_subprocess_exec(
         "docker", "run", "--rm", "--network", "none",
-        "-v", f"{agent_volume(src_agent_id)}:/from:ro",
-        "-v", f"{agent_volume(dst_agent_id)}:/workspace:rw",
+        "-v", f"{src_volume or agent_volume(src_agent_id)}:/from:ro",
+        "-v", f"{dst_volume or agent_volume(dst_agent_id)}:/workspace:rw",
         "--entrypoint", "sh", config.TASK_IMAGE, "-c",
         "cd /from && tar cf - --exclude=./.claude --exclude=./.cache . | tar xf - -C /workspace",
         stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
@@ -332,7 +349,7 @@ def _build_spec(agent: dict, model: str, *, prompt: str, resume: Optional[str],
 
 
 def _docker_cmd(run_id: int, agent_id: int, inject_env: dict,
-                memory: Optional[str] = None) -> list[str]:
+                memory: Optional[str] = None, volume: Optional[str] = None) -> list[str]:
     cmd = [
         "docker", "run", "--rm", "-i",
         "--name", f"superagent-run-{run_id}",
@@ -343,7 +360,7 @@ def _docker_cmd(run_id: int, agent_id: int, inject_env: dict,
         # per-agent persistent workspace: survives across runs so chat/follow-ups
         # keep files AND the session transcript (under CLAUDE_CONFIG_DIR below).
         # This named volume is only ever mounted for this agent's containers.
-        "-v", f"{agent_volume(agent_id)}:/workspace",
+        "-v", f"{volume or agent_volume(agent_id)}:/workspace",
         "-e", "CLAUDE_CONFIG_DIR=/workspace/.claude",
     ]
     # value-less -e pulls each var from the docker client's env (set below),
@@ -381,6 +398,13 @@ async def execute_run(run_id: int, agent: dict) -> None:
             prompt = f"{prompt}\n\n{addendum}"
     except Exception:  # noqa: BLE001 - never let the outcome layer block a run
         outcomes.log.exception("could not start an outcome for run %s", run_id)
+
+    # a dry run rehearses on a copy of the workspace, never the real one
+    run_volume = None
+    oc = await db.get_outcome(run["outcome_id"]) if run and run.get("outcome_id") else None
+    if oc and oc.get("trigger") == "dry_run":
+        await reset_dryrun_volume(agent["id"])
+        run_volume = dryrun_volume(agent["id"])
 
     async def handle(event: dict) -> None:
         nonlocal seq, result_text, cost_usd, usage, error
@@ -535,7 +559,7 @@ async def execute_run(run_id: int, agent: dict) -> None:
 
         try:
             proc = await asyncio.create_subprocess_exec(
-                *_docker_cmd(run_id, agent["id"], inject_env, memory=run_memory),
+                *_docker_cmd(run_id, agent["id"], inject_env, memory=run_memory, volume=run_volume),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -692,24 +716,34 @@ async def _kill_container(run_id: int, proc) -> None:
         pass
 
 
+async def _rm_volume(name: str) -> None:
+    for _ in range(5):
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "volume", "rm", name,
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+            _, stderr = await proc.communicate()
+            if proc.returncode == 0 or b"No such volume" in stderr:
+                return
+        except Exception:  # noqa: BLE001
+            return
+        await asyncio.sleep(0.5)
+
+
+async def reset_dryrun_volume(agent_id: int) -> None:
+    """Fresh copy of the real workspace for a dry run (an empty one if it never ran)."""
+    await _rm_volume(dryrun_volume(agent_id))
+    await copy_workspace(agent_id, agent_id, dst_volume=dryrun_volume(agent_id))
+
+
 async def remove_agent_volume(agent_id: int) -> None:
     """Best-effort delete of an agent's persistent workspace volume (on delete).
 
     Retries briefly: a just-finished container may still hold the volume for a
     moment after `docker run --rm` returns.
     """
-    for _ in range(5):
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "docker", "volume", "rm", agent_volume(agent_id),
-                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await proc.communicate()
-            if proc.returncode == 0 or b"No such volume" in stderr:
-                return
-        except Exception:
-            return
-        await asyncio.sleep(0.5)
+    await _rm_volume(agent_volume(agent_id))
+    await _rm_volume(dryrun_volume(agent_id))
 
 
 async def start_run(run_id: int, agent: dict) -> None:

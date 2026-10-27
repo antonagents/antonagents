@@ -164,12 +164,13 @@ async def _check_artifact(cfg: dict, ctx: dict) -> dict:
     path = safe_rel_path(render(cfg.get("path", ""), ctx))
     if not path:
         return {"passed": False, "detail": "path must be relative to the workspace"}
-    if not await runner._volume_exists(ctx["agent_id"]):
+    vol = ctx.get("volume") or runner.agent_volume(ctx["agent_id"])
+    if not await runner._volume_exists(ctx["agent_id"], vol):
         return {"passed": False, "detail": "the agent has no workspace yet"}
     inner = ('if [ -e "/ws/$P" ]; then echo EXISTS; stat -c "%Y %s" "/ws/$P"; '
              'echo ---TAIL---; tail -n 400 "/ws/$P"; else echo MISSING; fi')
     cmd = ["docker", "run", "--rm", "--network", "none", "--memory", "128m",
-           "-v", f"{runner.agent_volume(ctx['agent_id'])}:/ws:ro", "-e", "P",
+           "-v", f"{vol}:/ws:ro", "-e", "P",
            "alpine", "sh", "-c", inner]
     code, out, errtxt = await run_container(cmd, {"P": path}, timeout=30)
     if code != 0:
@@ -232,11 +233,11 @@ async def _check_artifact(cfg: dict, ctx: dict) -> dict:
 
 # ---------------- table (a CSV register the agent wrote) ----------------
 
-async def _list_dir(agent_id: int, rel: str) -> list[str]:
+async def _list_dir(agent_id: int, rel: str, volume: Optional[str] = None) -> list[str]:
     from . import runner
     inner = 'cd "/ws/$D" 2>/dev/null && find . -maxdepth 1 -type f ! -name ".*" -printf "%P\\n" | sort'
     cmd = ["docker", "run", "--rm", "--network", "none", "--memory", "128m",
-           "-v", f"{runner.agent_volume(agent_id)}:/ws:ro", "-e", "D", "alpine", "sh", "-c", inner]
+           "-v", f"{volume or runner.agent_volume(agent_id)}:/ws:ro", "-e", "D", "alpine", "sh", "-c", inner]
     code, out, _ = await run_container(cmd, {"D": rel}, timeout=30)
     return [ln for ln in out.splitlines() if ln.strip()] if code == 0 else []
 
@@ -246,13 +247,14 @@ async def _check_table(cfg: dict, ctx: dict) -> dict:
     path = safe_rel_path(render(cfg.get("path", ""), ctx))
     if not path:
         return {"passed": False, "detail": "path must be relative to the workspace"}
-    raw = await runner.read_artifact(ctx["agent_id"], f"/ws/{path}")
+    raw = await runner.read_artifact(ctx["agent_id"], f"/ws/{path}", volume=ctx.get("volume"))
     if raw is None:
         return {"passed": False, "observed": "missing", "expected": f"{path} exists", "detail": path}
     files = None
     cover = cfg.get("covers_files")
     if cover:
-        files = await _list_dir(ctx["agent_id"], safe_rel_path(render(cover.get("dir", ""), ctx)) or "")
+        files = await _list_dir(ctx["agent_id"], safe_rel_path(render(cover.get("dir", ""), ctx)) or "",
+                                ctx.get("volume"))
     try:
         return tablecheck.check(raw.decode("utf-8", errors="replace"), cfg, files)
     except tablecheck.RuleError as e:
@@ -308,10 +310,11 @@ async def _judge_content(cfg: dict, ctx: dict) -> tuple[Optional[str], str]:
         return (ctx.get("result") or None), "the agent's final message"
     from . import runner, deliver   # lazy: both import the outcome engine chain
     if src == "file":
-        raw = await runner.read_artifact(ctx["agent_id"], f"/ws/{safe_rel_path(cfg.get('path', ''))}")
+        raw = await runner.read_artifact(ctx["agent_id"], f"/ws/{safe_rel_path(cfg.get('path', ''))}",
+                                         volume=ctx.get("volume"))
         return (raw.decode("utf-8", errors="replace") if raw else None), cfg.get("path", "")
     oid = ctx.get("outcome_id")
-    text = await deliver._read_outbox(ctx["agent_id"], oid) if oid else None
+    text = await deliver._read_outbox(ctx["agent_id"], oid, volume=ctx.get("volume")) if oid else None
     return text, "the message staged for delivery"
 
 

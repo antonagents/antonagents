@@ -854,7 +854,8 @@ _ARTIFACT_MAX_FILES = 500
 _ARTIFACTS_SUBDIR = "artifacts"
 
 
-_WS_SERVE_DIRS = {"artifacts": _ARTIFACTS_SUBDIR, "uploads": "uploads"}
+_WS_SERVE_DIRS = {"artifacts": _ARTIFACTS_SUBDIR, "uploads": "uploads",
+                  "workspace": ""}   # any visible file (e.g. a job's output/register.xlsx)
 
 
 def _safe_ws_relpath(rel: str, subdir: str = "artifacts") -> str:
@@ -867,19 +868,23 @@ def _safe_ws_relpath(rel: str, subdir: str = "artifacts") -> str:
     p = PurePosixPath(rel)
     if p.is_absolute() or any(part == ".." for part in p.parts):
         raise HTTPException(400, "invalid path")
+    if subdir == "workspace" and (not p.parts or any(part.startswith(".") for part in p.parts)):
+        raise HTTPException(400, "invalid path")   # never hidden state like .claude/
     return str(PurePosixPath("/ws") / root / p)
 
 
 @app.get("/api/agents/{agent_id}/files")
-async def list_agent_files(agent_id: int, user: dict = Depends(current_user)):
+async def list_agent_files(agent_id: int, dryrun: int = 0, user: dict = Depends(current_user)):
+    """Deliverables (artifacts/ and output/). dryrun=1: the last dry run's copy."""
     await _owned_agent_or_404(agent_id, user)
-    rows = await runner.list_artifacts(agent_id)
+    rows = await runner.list_artifacts(agent_id, runner.volume_for(agent_id, bool(dryrun)))
     if rows is None:                       # no workspace volume yet (never ran)
         return {"files": [], "truncated": False}
     rows.sort(key=lambda r: r.get("mtime", 0.0), reverse=True)
     truncated = len(rows) > _ARTIFACT_MAX_FILES
     files = [{
         "path": r["path"],
+        "dir": r.get("dir", "artifacts"),
         "size": r["size"],
         "modified": datetime.fromtimestamp(r["mtime"], timezone.utc)
                     .strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -889,11 +894,11 @@ async def list_agent_files(agent_id: int, user: dict = Depends(current_user)):
 
 @app.get("/api/agents/{agent_id}/file")
 async def get_agent_file(agent_id: int, path: str = Query(..., min_length=1),
-                         dir: str = "artifacts", dl: int = 0,
+                         dir: str = "artifacts", dl: int = 0, dryrun: int = 0,
                          user: dict = Depends(current_user)):
     await _owned_agent_or_404(agent_id, user)
     ws_path = _safe_ws_relpath(path, dir)
-    data = await runner.read_artifact(agent_id, ws_path)
+    data = await runner.read_artifact(agent_id, ws_path, volume=runner.volume_for(agent_id, bool(dryrun)))
     if data is None:
         raise HTTPException(404, "file not found")
     media, _ = mimetypes.guess_type(path)

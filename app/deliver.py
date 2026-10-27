@@ -143,9 +143,9 @@ def outbox_path(outcome_id: int) -> str:
 
 # ---------------- message ----------------
 
-async def _read_outbox(agent_id: int, outcome_id: int) -> Optional[str]:
+async def _read_outbox(agent_id: int, outcome_id: int, volume: Optional[str] = None) -> Optional[str]:
     from . import runner   # lazy: runner imports the outcome engine
-    raw = await runner.read_artifact(agent_id, f"/ws/{outbox_path(outcome_id)}")
+    raw = await runner.read_artifact(agent_id, f"/ws/{outbox_path(outcome_id)}", volume=volume)
     if not raw:
         return None
     text = raw.decode("utf-8", errors="replace").strip()

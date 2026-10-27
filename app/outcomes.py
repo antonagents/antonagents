@@ -111,6 +111,13 @@ async def finish_attempt(run_id: int) -> None:
         await db.release()
 
 
+def _volume_for_outcome(o: dict) -> Optional[str]:
+    if o.get("trigger") != "dry_run":
+        return None
+    from . import runner   # lazy: runner imports this module
+    return runner.dryrun_volume(o["agent_id"])
+
+
 def _secs(a: Optional[str], b: Optional[str]) -> Optional[int]:
     try:
         return int((datetime.datetime.fromisoformat(b.replace("Z", "+00:00"))
@@ -180,6 +187,8 @@ async def verify_outcome(outcome_id: int, attempt: Optional[int] = None,
         "org_id": o["org_id"], "agent_id": o["agent_id"],
         # step 6: what a judge reads
         "outcome_id": outcome_id, "objective": spec.get("objective"),
+        # a dry run's work lives in its own copy of the workspace
+        "volume": _volume_for_outcome(o),
         "result": _MANIFEST.sub("", (run and run.get("result")) or "").strip(),
     }
     gated = o.get("trigger") not in ("backfill", "dry_run")   # people only review live outcomes
@@ -216,7 +225,7 @@ async def verify_outcome(outcome_id: int, attempt: Optional[int] = None,
     if (o.get("trigger") == "dry_run" or waiting) and deliver.message_destinations(spec):
         try:
             agent_ = await db.get_agent(o["agent_id"])
-            msg = await deliver._read_outbox(o["agent_id"], outcome_id)
+            msg = await deliver._read_outbox(o["agent_id"], outcome_id, volume=_volume_for_outcome(o))
             preview = deliver.compose({**o, "manifest": manifest, "receipt": {}}, agent_ or {}, msg)["plain"]
         except Exception:  # noqa: BLE001
             log.exception("could not build the dry-run delivery preview")

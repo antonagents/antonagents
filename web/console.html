@@ -1108,7 +1108,7 @@
 <div id="filesModal" class="modal" onclick="if(event.target===this)closeFiles()">
   <div class="modal-card">
     <div class="modal-head">
-      <h2>Artifacts</h2><span class="count" id="filesCount"></span>
+      <h2 id="filesTitle">Artifacts</h2><span class="count" id="filesCount"></span>
       <button class="ghost" style="margin-left:auto" onclick="closeFiles()">Close</button>
     </div>
     <div class="modal-body"><div id="filesList"></div></div>
@@ -2053,13 +2053,15 @@ window.createRoutineFromChat = async () => {
 
 // ---- files / artifacts (browse · view · download the agent's workspace) ----
 let FILES_AGENT = null;
-window.openFiles = async (id) => {
+let FILES_DRYRUN = false;
+window.openFiles = async (id, dryrun) => {
   if (id==null) return;
-  FILES_AGENT = id;
+  FILES_AGENT = id; FILES_DRYRUN = !!dryrun;
+  $('#filesTitle').textContent = FILES_DRYRUN ? 'Dry-run files' : 'Artifacts';
   $('#filesModal').style.display = 'flex';
   $('#filesList').innerHTML = '<div class="hint">Loading…</div>';
   $('#filesCount').textContent = '';
-  let r; try { r = await api('/api/agents/'+id+'/files'); }
+  let r; try { r = await api('/api/agents/'+id+'/files'+(FILES_DRYRUN ? '?dryrun=1' : '')); }
   catch(e){ $('#filesList').innerHTML = '<div class="hint err">'+esc(e.detail||e.message||'error')+'</div>'; return; }
   if (FILES_AGENT !== id) return;   // modal was closed / reopened for another agent
   renderFiles(r.files||[], r.truncated);
@@ -2131,8 +2133,8 @@ function renderFiles(files, truncated){
     return;
   }
   const base = '/api/agents/'+FILES_AGENT+'/file?path=';
-  $('#filesList').innerHTML = files.map(f => {
-    const url = base + encodeURIComponent(f.path);
+  $('#filesList').innerHTML = (FILES_DRYRUN ? '<div class="hint" style="margin-bottom:8px">What the last dry run produced, in its own copy of the workspace — the real workspace was not changed.</div>' : '') + files.map(f => {
+    const url = base + encodeURIComponent(f.path) + '&dir=' + encodeURIComponent(f.dir || 'artifacts') + (FILES_DRYRUN ? '&dryrun=1' : '');
     const when = esc((f.modified||'').replace('T',' ').replace('Z',''));
     return `<div class="filerow">
       <span class="fname" title="${esc(f.path)}">${esc(f.path)}</span>
@@ -2225,6 +2227,7 @@ function outcomeCard(t){
         <button class="ghost sm" onclick="resolveOutcome(${o.id},'dismiss')">Dismiss</button></div></div>` : ''}
     ${o.status === 'recovering' && o.next_attempt_at ? `<div class="oc-note">Next attempt ${esc(_ocTime(o.next_attempt_at))}</div>` : ''}
     ${o.status === 'awaiting_approval' ? _reviewBox(o.id, r.delivery_preview, 'approval', false, r.held_actions) : ''}
+    ${_ocFiles(t, o)}
     ${(o.actions||[]).length ? `<div class="oc-dl"><span class="oc-k">Actions</span>
       ${o.actions.slice().reverse().map(a => `<span class="oc-dchip ${['executed','forwarded'].includes(a.status)?'ok':['failed','blocked','rejected'].includes(a.status)?'bad':''}" title="${esc(a.category+' · '+a.decision+(a.error?' · '+a.error:''))}">${({executed:'✓',forwarded:'→',held:'⏸',blocked:'⛔',rejected:'✗',failed:'✗',approved:'…'})[a.status]||''} ${esc(a.tool_slug)}</span>`).join('')}</div>` : ''}
     ${o.status === 'delivered' && o.review_requested_at && !o.reviewed_at ? _reviewBox(o.id, null, 'spot_check') : ''}
@@ -2351,6 +2354,17 @@ function _grSummary(t){
   return [ask.length ? 'asks before: '+ask.join(', ') : '', no.length ? 'blocks: '+no.join(', ') : ''].filter(Boolean).join(' · ') || 'everything allowed';
 }
 
+// links to the deliverables a job's checks look at (register, report…), from this outcome's workspace
+function _ocFiles(t, o){
+  const paths = [...new Set((t.spec && t.spec.checks || []).filter(c => ['artifact','table'].includes(c.kind))
+    .map(c => (c.config||{}).path).filter(p => p && !p.includes('{')))];
+  if (!paths.length || ['running','verifying'].includes(o.status)) return '';
+  const dry = o.trigger === 'dry_run' ? '&dryrun=1' : '';
+  return `<div class="oc-dl"><span class="oc-k">${dry ? 'Dry-run files' : 'Files'}</span>${paths.map(p => {
+    const u = `/api/agents/${t.id}/file?dir=workspace&path=${encodeURIComponent(p)}${dry}`;
+    return `<span class="oc-dchip">${esc(p.split('/').pop())} <a href="${u}" target="_blank" rel="noopener">view</a> · <a href="${u}&dl=1">download</a></span>`;
+  }).join('')}</div>`;
+}
 window.redeliverOutcome = async (oid) => {
   try {
     const o = await api('/api/outcomes/'+oid+'/deliver', {method:'POST'});
@@ -2724,6 +2738,8 @@ async function _dodPoll(oid){
   _dodResults(r.checks || []);
   box.innerHTML = `<b>${o.status==='delivered' ? '✓ Dry run verified' : '✗ Dry run not verified'}</b> — ${esc(r.summary||r.headline||'')}
     ${r.delivery_preview ? `<div class="fld-label" style="margin-top:8px">This is what would have been delivered</div><div class="dod-preview">${esc(r.delivery_preview)}</div>` : ''}
+    <div class="oc-cta" style="margin-top:8px"><button class="ghost sm" onclick="openFiles(${DOD.agentId}, true)">See the files it produced</button>
+      <span class="dod-sum">in a copy of the workspace — the real one wasn't changed</span></div>
     ${DOD.enabled === false ? `<div class="oc-cta" style="margin-top:10px">
       <button onclick="goLive(${DOD.agentId})">${o.status==='delivered' ? 'Go live' : 'Go live anyway'}</button>
       <button class="ghost" onclick="closeDod();gotoRoutine(${DOD.agentId})">Open the routine</button></div>` : ''}`;
